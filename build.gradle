@@ -1,0 +1,281 @@
+apply plugin: 'cpp'
+
+// https://github.com/couchbase/couchbase-lite-java-native/issues/23
+//def VS_2015_INCLUDE_DIR = 'C:/Program Files (x86)/Windows Kits/10/Include/10.0.10240.0/ucrt'
+//def VS_2015_LIB_DIR = 'C:/Program Files (x86)/Windows Kits/10/Lib/10.0.10240.0/ucrt'
+
+//def NSS_ROOT = System.getEnv('NSS_ROOT')
+//def NSS_BUILDSTRING = 'WIN954.0_64_DBG.OBJ'
+
+//def NSS_LIB_DIR = WIN954.0_64_DBG.OBJ
+//def NSS_DIST_DIR = "C:/mist/nss-3.24/dist"
+
+//def NSS_VERSION = "nss-3.24"
+
+//def BOOST_DIR = "boost_1_61_0"
+//def BOOST_LIB_DIR = BOOST_DIR + "/bin.v2/libs"
+//def BOOST_BUILDPATH = "/build/msvc-14.0/debug/link-static/threading-multi/"
+
+//def NGHTTP2_DIR = "nghttp2"
+//def LIBEVENT_DIR = "libevent"
+/* 
+def createBuildNSSTask(def use64, def platform) {
+  def name = 'buildNSS' + platform + (use64 ? '64' : '32')
+  return tasks.create(name, type:Exec) {->
+    environment USE_64: use64 ? '1' : '0'
+    if (platform == 'windows') {
+      commandLine 'cmd', '/c', 'build.bat'
+    } else {
+      commandLine 'build.sh'
+    }
+  }
+}
+ */
+ 
+model {
+  //dependencies {
+  //  compile files(NSS_DIST_DIR + "/")
+  //}
+  buildTypes {
+    debug
+    release
+  }
+  platforms {
+    x64 {
+      architecture 'x86-64'
+    }
+//    itanium {
+//      architecture "ia-64"
+//    }
+    x86 {
+      architecture 'x86'
+    }
+  }
+  // repositories {
+    // libs(PrebuiltLibraries) {
+      // def libEnd = targetPlatform.operatingSystem.windows ? 'lib' : 'a'
+      // nss {
+        // def NSS_ROOT = System.getEnv('NSS_ROOT')
+        // if (NSS_ROOT != '') {
+          // headers.srcDir "${NSS_ROOT}/dist/public/nss"
+          // headers.srcDir "${NSS_ROOT}/dist/${NSS_BUILDSTRING}/include"
+          // binaries.withType(StaticLibraryBinary) {
+            // staticLibraryFile = file("${NSS_ROOT}/dist/${NSS_BUILDSTRING}/lib/nss3.${libEnd}")
+          // }
+        // } else {
+          // binaries.withType(StaticLibraryBinary) {
+            // staticLibraryFile = file("${NSS_ROOT}/dist/${NSS_BUILDSTRING}/lib/nss3.${libEnd}")
+          // }
+        // }
+      // }
+      // nspr {
+        // def NSS_ROOT = System.getEnv('NSS_ROOT')
+        // if (NSS_ROOT != '') {
+          // binaries.withType(StaticLibraryBinary) {
+            // staticLibraryFile = file("${NSS_ROOT}/dist/${NSS_BUILDSTRING}/lib/nspr4.${libEnd}")
+          // }
+        // }
+      // }
+      // plc {
+        // def NSS_ROOT = System.getEnv('NSS_ROOT')
+        // if (NSS_ROOT != '') {
+          // binaries.withType(StaticLibraryBinary) {
+            // staticLibraryFile = file("${NSS_ROOT}/dist/${NSS_BUILDSTRING}/lib/plc4.${libEnd}")
+          // }
+        // }
+      // }
+      // boost_system {
+        // if (BOOST_ROOT != '') {
+          // headers.srcDir BOOST_ROOT
+          // binaries.withType(StaticLibraryBinary) {
+            // if (buildType == buildTypes.debug) {
+              // staticLibraryFile = file("dependencies/lib/libboost_system-vc140-mt-sgd-1_61.${libEnd}")
+            // } else {
+              // staticLibraryFile = file("dependencies/lib/libboost_system-vc140-mt-s-1_61.${libEnd}")
+            // }
+          // }
+        // }
+      // }
+      // nghttp2 {
+        // def NGHTTP2_ROOT = System.getEnv('NGHTTP2_ROOT')
+        // if (BOOST_ROOT != '') {
+          // headers.srcDir "${NGHTTP2_ROOT}/lib/includes"
+          // //headers.srcDir NGHTTP2_ROOT + "/src/includes"
+          // binaries.withType(StaticLibraryBinary) {
+            // if (targetPlatform.operatingSystem.windows) {
+              // staticLibraryFile = file("${NGHTTP2_ROOT}/lib/MSVC_obj/nghttp2.lib")
+            // }
+          // }
+        // }
+      // }
+      // cunit {
+        // headers.srcDir "libs/cunit/2.1-2/include"
+        // binaries.withType(StaticLibraryBinary) {
+          // staticLibraryFile =
+              // file("libs/cunit/2.1-2/lib/" +
+                   // findCUnitLibForPlatform(targetPlatform))
+        // }
+      // }
+    // }
+  // }
+    
+  binaries {
+    all {
+      //def NSS_DIR = "nss/" + NSS_VERSION
+/*        if (targetPlatform.operatingSystem.windows) {
+        cppCompiler.define "WIN32"
+        cppCompiler.args "/I" + VS_2015_INCLUDE_DIR
+        if(targetPlatform == platforms.x86) { 
+        }
+        //else if(targetPlatform.architecture.name == "x86-64" || targetPlatform.architecture.name == "ia-64") {
+        else if(targetPlatform == platforms.x64) {
+        }
+        linker.args "/LIBPATH:" + file("dependencies/lib").absolutePath
+      } else if (targetPlatform.operatingSystem.linux) {
+        cppCompiler.args "-std=c++14"
+      } */
+      // https://discuss.gradle.org/t/how-do-i-link-a-c-library-with-another-library-file-that-i-know-the-path-of/7241/7
+
+      
+      //def LIB_END = targetPlatform.operatingSystem.windows ? 'lib' : 'a'
+      
+      def NSS_ROOT = System.getenv('NSS_ROOT')
+      def NSS_BUILDSTRING = 'WIN954.0_64_DBG.OBJ'
+      if (NSS_ROOT) {
+        if (toolChain in VisualCpp) {
+          cppCompiler.args '/I' + file("${NSS_ROOT}/dist/public/nss").absolutePath
+          cppCompiler.args '/I' + file("${NSS_ROOT}/dist/${NSS_BUILDSTRING}/include").absolutePath
+          linker.args '/LIBPATH:' + file("${NSS_ROOT}/dist/${NSS_BUILDSTRING}/lib").absolutePath
+        } else {
+          cppCompiler.args '-I' + file("${NSS_ROOT}/dist/public/nss").absolutePath
+          cppCompiler.args '-I' + file("${NSS_ROOT}/dist/${NSS_BUILDSTRING}/include").absolutePath
+          linker.args '-L' + file("${NSS_ROOT}/dist/${NSS_BUILDSTRING}/lib").absolutePath
+        }
+      } else if (targetPlatform.operatingSystem.linux) {
+        cppCompiler.args '-I/usr/include/nss'
+        cppCompiler.args '-I/usr/include/nspr'
+      }
+      
+      def BOOST_ROOT = System.getenv('BOOST_ROOT')
+      if (BOOST_ROOT != '') {
+        if (toolChain in VisualCpp) {
+          cppCompiler.args '/I' + file("${BOOST_ROOT}").absolutePath
+          linker.args '/LIBPATH:' + file("${BOOST_ROOT}/stage/lib").absolutePath
+        } else {
+          cppCompiler.args '-I' + file("${BOOST_ROOT}").absolutePath
+          linker.args '-L' + file("${BOOST_ROOT}/stage/lib").absolutePath
+        }
+      }
+      
+      def NGHTTP2_ROOT = System.getenv('NGHTTP2_ROOT')
+      if (NGHTTP2_ROOT != '') {
+        if (toolChain in VisualCpp) {
+          cppCompiler.args '/I' + file("${NGHTTP2_ROOT}/lib/includes").absolutePath
+          linker.args '/LIBPATH:' + file("${NGHTTP2_ROOT}/lib/MSVC_obj").absolutePath
+        } else {
+          cppCompiler.args '-I' + file("${NGHTTP2_ROOT}/lib/includes").absolutePath
+          linker.args '-L' + file("${NGHTTP2_ROOT}/lib/MSVC_obj").absolutePath
+        }
+      }
+      
+      if (toolChain in VisualCpp) {
+        cppCompiler.define 'ssize_t', 'long'
+        cppCompiler.define '_U_', ''
+        cppCompiler.define 'WIN32'
+        cppCompiler.define '_WIN32_WINNT', '0x0501'
+        cppCompiler.define '_WINDOWS'
+        //cppCompiler.define '_USRDLL'
+        //cppCompiler.define '_WINDLL'
+        cppCompiler.define '_UNICODE'
+        cppCompiler.define 'UNICODE'
+        //cppCompiler.define '_EXPORTING'
+        cppCompiler.args "/I${VS_2015_INCLUDE_DIR}"
+        linker.args '/NOLOGO'
+        linker.args '/SUBSYSTEM:CONSOLE'
+        linker.args '/LIBPATH:' + file('dependencies/lib').absolutePath
+        if (targetPlatform == platforms.x64) {
+          linker.args '/LIBPATH:' + file("${VS_2015_LIB_DIR}/x64").absolutePath
+          linker.args '/MACHINE:X64'
+        } else {
+          linker.args "/LIBPATH:" + file("${VS_2015_LIB_DIR}/x86").absolutePath
+          linker.args '/MACHINE:X86'
+        }
+        if (buildType == buildTypes.debug) {
+          cppCompiler.define '_DEBUG'
+          cppCompiler.args '/EHsc', '/MTd'
+          linker.args '/INCREMENTAL'
+          linker.args '/DEBUG'
+        } else {
+          cppCompiler.define 'NDEBUG'
+          cppCompiler.args '/EHsc', '/MD'
+          linker.args '/INCREMENTAL:NO'
+          linker.args '/NOLOGO'
+          linker.args '/OPT:REF'
+          linker.args '/OPT:ICF'
+        }
+      }
+      
+      if (toolChain in Gcc) {
+        buildable = !(targetPlatform == platforms.x86 && targetPlatform.operatingSystem.linux)
+        cppCompiler.args '-std=c++14', '-fPIC'
+        if (buildType == buildTypes.debug) {
+          cppCompiler.args '-g', '-O0'
+        } else {
+          cppCompiler.args '-O3', '-march=core2'
+        }
+      }
+      
+      if (toolChain in Clang) {
+        buildable = !(targetPlatform == platforms.x86 && targetPlatform.operatingSystem.macOsX)
+        cppCompiler.args '-std=c++14', '-fPIC'
+        if (buildType == buildTypes.debug) {
+          cppCompiler.args '-g', '-O0'
+        } else {
+          cppCompiler.args '-O3', '-march=core2'
+        }
+      }
+    }
+  }
+  components {
+/*     server(NativeExecutableSpec) {
+      targetPlatform 'x64'
+      binaries {
+        all {
+          lib library: 'nss', linkage: 'static'
+          lib library: 'nspr', linkage: 'static'
+          lib library: 'plc', linkage: 'static'
+          lib library: 'boost_system', linkage: 'static'
+          lib library: 'nghttp2', linkage: 'static'
+        }
+      }
+    } */
+    client(NativeExecutableSpec) {
+      targetPlatform 'x64'
+      binaries {
+        all {
+          if (toolChain in VisualCpp) {
+            linker.args 'nss3.lib'
+            linker.args 'nspr4.lib'
+            linker.args 'plc4.lib'
+            linker.args 'boost_system.lib'
+            linker.args 'boost_random.lib'
+            linker.args 'nghttp2.lib'
+          } else {
+            linker.args '-lnss3'
+            linker.args '-lnspr4'
+            linker.args '-lplc4'
+            linker.args '-lssl3'
+            linker.args '-lboost_system'
+            linker.args '-lboost_random'
+            linker.args '-lnghttp2'
+            linker.args '-lpthread'
+          }
+        }
+      }
+    }
+  }
+}
+
+//task wrapper(type: Wrapper) {
+//  gradleVersion = '2.13'
+//}
