@@ -4,6 +4,9 @@
 #include <boost/system/error_code.hpp>
 #include <prerror.h>
 
+namespace mist
+{
+
 const boost::system::error_category &nss_category() noexcept;
 
 /* Create a boost::system::error_code with the given error value */
@@ -11,5 +14,7 @@ boost::system::error_code make_nss_error(PRErrorCode ev);
 
 /* Use PR_GetError() to create a boost::system::error_code */
 boost::system::error_code make_nss_error();
+
+}
 
 #endif

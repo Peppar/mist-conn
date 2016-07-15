@@ -43,14 +43,19 @@
 #include <secasn1.h>
 
 #include <nghttp2/nghttp2.h>
+#include <boost/exception/diagnostic_information.hpp> 
+#include <boost/generator_iterator.hpp>
 #include <boost/optional.hpp>
 #include <boost/random.hpp>
 #include <boost/random/random_device.hpp>
-#include <boost/generator_iterator.hpp>
 
-#include "nss_memory.h"
+#include "error/mist.hpp"
+#include "error/nss.hpp"
+#include "memory/nss.hpp"
 #include "context.hpp"
 #include "socket.hpp"
+
+#include "h2/session.hpp"
 
 namespace
 {
@@ -88,7 +93,7 @@ std::string to_hex(SECItem *item)
  */
 void handshakeSOCKS5(mist::Socket &sock,
   std::string hostname, uint16_t port,
-  std::function<void(std::string)> cb)
+  std::function<void(std::string, boost::system::error_code)> cb)
 {
   std::array<uint8_t, 4> socksReq;
   socksReq[0] = 5; /* Version */
@@ -96,26 +101,19 @@ void handshakeSOCKS5(mist::Socket &sock,
   socksReq[2] = 0;
   socksReq[3] = 2;
 
-  sock.write(mist::Socket::createProvider(socksReq.data(), socksReq.size()));
+  sock.write(socksReq.data(), socksReq.size());
 
   sock.readOnce(2,
     [=, &sock, cb(std::move(cb))]
-    (const uint8_t *data, std::size_t length) mutable
+    (const uint8_t *data, std::size_t length, boost::system::error_code ec) mutable
   {
-    if (length != 2) {
-      std::cerr << "Invalid packet length returned" << std::endl;
-      cb("");
-      return; /* Invalid packet length read */
+    if (ec) {
+      cb("", ec);
+      return;
     }
-    if (data[0] != 5) {
-      std::cerr << "Wrong SOCKS version" << std::endl;
-      cb("");
-      return; /* Wrong version */
-    }
-    if (data[1] != 0) {
-      std::cerr << "Authentication needed" << std::endl;
-      cb("");
-      return; /* Authentication needed */
+    if (length != 2 || data[0] != 5 || data[1] != 0) {
+      cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
+      return;
     }
     
     /* Construct the SOCKS5 connect request */
@@ -134,27 +132,20 @@ void handshakeSOCKS5(mist::Socket &sock,
       assert (outIt == connReq.end());
     }
     
-    sock.write(mist::Socket::createProvider(connReq.data(), connReq.size()));
+    sock.write(connReq.data(), connReq.size());
     
     /* Read 5 bytes; these are all the bytes we need to determine the
        final packet size */
     sock.readOnce(5,
       [=, &sock, cb(std::move(cb))]
-      (const uint8_t *data, std::size_t length)
+      (const uint8_t *data, std::size_t length, boost::system::error_code ec)
     {
-      if (length != 5) {
-        std::cerr << "Invalid packet length returned" << std::endl;
-        cb("");
+      if (ec) {
+        cb("", ec);
         return;
       }
-      if (data[0] != 5) {
-        std::cerr << "Wrong SOCKS version" << std::endl;
-        cb("");
-        return;
-      }
-      if (data[1] != 0) {
-        std::cerr << "Connection error" << std::endl;
-        cb("");
+      if (length != 5 || data[0] != 5 || data[1] != 0) {
+        cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
         return;
       }
       
@@ -169,20 +160,23 @@ void handshakeSOCKS5(mist::Socket &sock,
       else if (type == 4)
         complLength = 22 - 5;
       else {
-        std::cerr << "SOCKS type unknown" << std::endl;
-        cb("");
+        cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
         return;
       }
       
       sock.readOnce(complLength,
         [=, &sock, cb(std::move(cb))]
-        (const uint8_t *data, std::size_t length) mutable
+        (const uint8_t *data, std::size_t length, boost::system::error_code ec) mutable
       {
-        if (complLength != length) {
-          std::cerr << "Invalid packet length returned" << std::endl;
-          cb("");
+        if (ec) {
+          cb("", ec);
           return;
         }
+        if (complLength != length) {
+          cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
+          return;
+        }
+        
         std::string address;
         if (type == 1)
           address = std::to_string(firstByte) + '.'
@@ -204,7 +198,7 @@ void handshakeSOCKS5(mist::Socket &sock,
             + to_hex(data[13]) + to_hex(data[14]) + ':'
             + std::to_string((data[15] << 8) | data[16]);
         assert (address.length());
-        cb(address);
+        cb(address, boost::system::error_code());
       });
     });
   });
@@ -215,34 +209,24 @@ void handshakeSOCKS5(mist::Socket &sock,
  */
 void connectTor(mist::Socket &sock, uint16_t torPort,
   std::string hostname, uint16_t port,
-  std::function<void(std::string)> cb)
+  std::function<void(std::string, boost::system::error_code)> cb)
 {
   /* Initialize addr to localhost:torPort */
   PRNetAddr addr;
-  if (PR_InitializeNetAddr(PR_IpAddrLoopback, torPort, &addr) != PR_SUCCESS)
-    throw new std::runtime_error("PR_InitializeNetAddr failed");
+  if (PR_InitializeNetAddr(PR_IpAddrLoopback, torPort, &addr) != PR_SUCCESS) {
+    cb("", mist::make_nss_error());
+    return;
+  }
 
-  sock.connect(addr,
+  sock.connect(&addr,
     [=, &sock, cb(std::move(cb))]
-    (bool success) mutable
+    (boost::system::error_code ec) mutable
   {
-    if (!success) {
-      cb("");
-      std::cerr << "Failed to connect" << std::endl;
+    if (ec) {
+      cb("", ec);
       return;
     }
     handshakeSOCKS5(sock, std::move(hostname), port, std::move(cb));
-      // [=, &sock, cb(std::move(cb))]
-      // (std::string address) mutable
-    // {
-      // if (address.empty()) {
-        // cb("");
-        // std::cerr << "Failed to SOCKS5 connect" << std::endl;
-        // return;
-      // }
-      // std::cerr << "SOCKS5 connected to " << address << std::endl;
-      // cb(std::move(address));
-    // });
   });
 }
 
@@ -257,56 +241,75 @@ main(int argc, char **argv)
     int port = isServer ? 9150 : 9151;
     
     mist::SSLContext sslCtx(nickname);
-    
+    /*
     sslCtx.serve(port,
       [](mist::Socket &sock)
     {
       std::cerr << "New connection !!! " << std::endl;
       sock.handshake(
-        [&sock](bool success)
+        [&sock](boost::system::error_code ec)
       {
-        std::cerr << "Handshaked! " << success << std::endl;
+        if (ec) {
+          std::cerr << "Error!!!" << std::endl;
+          return;
+        }
+        std::cerr << "Handshaked! " << std::endl;
         auto sessionId = to_unique(SSL_GetSessionID(sock.fileDesc()));
         std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
         const uint8_t *data = (const uint8_t *)"Hus";
         sock.write(data, 3);
-        sock.readContinuous(
-          [&sock](const uint8_t *data, std::size_t length)
+        sock.read(
+          [&sock](const uint8_t *data, std::size_t length, boost::system::error_code ec)
         {
+          if (ec)
+            std::cerr << "Read error!!!" << std::endl;
           std::cerr << "Server received " << std::string((const char*)data, length) << std::endl;
         });
       });
     });
-    
+    */
     if (!isServer) {
       // Try connect
       PRNetAddr addr;
-      if (PR_InitializeNetAddr(PR_IpAddrLoopback, 9150, &addr) != PR_SUCCESS)
+      
+      if (PR_StringToNetAddr(
+        "130.211.116.44",
+        &addr) != PR_SUCCESS)
         throw new std::runtime_error("PR_InitializeNetAddr failed");
+      addr.inet.port = PR_htons(443);
+      //if (PR_InitializeNetAddr(PR_IpAddrLoopback, 9150, &addr) != PR_SUCCESS)
+      //  throw new std::runtime_error("PR_InitializeNetAddr failed");
+    
       mist::Socket &sock = sslCtx.openClientSocket();
       std::cerr << "Trying to connect..." << std::endl;
-      sock.connect(addr,
-        [&sock](bool success)
+      sock.connect(&addr,
+        [&sock](boost::system::error_code ec)
       {
-        if (success) {
+        if (ec) {
+          std::cerr << "Could not connect: " << ec.message() << std::endl;
+        } else {
           std::cerr << "Connected! Initializing TLS..:" << std::endl;
           sock.handshake(
-            [&sock](bool success)
+            [&sock](boost::system::error_code ec)
           {
-            std::cerr << "Handshaked! " << success << std::endl;
-            auto sessionId = to_unique(SSL_GetSessionID(sock.fileDesc()));
-            std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
+            if (ec) {
+              std::cerr << "Could not handshake: " << ec.message() << std::endl;
+            } else {
+              std::cerr << "Handshaked! " << std::endl;
+              
+              /*
+              auto sessionId = to_unique(SSL_GetSessionID(sock.fileDesc()));
+              std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
 
-            const uint8_t *data = (const uint8_t *)"Hoj";
-            sock.write(data, 3);
-            sock.readContinuous(
-              [&sock](const uint8_t *data, std::size_t length)
-            {
-              std::cerr << "Client received " << std::string((const char*)data, length) << std::endl;
-            });
+              const uint8_t *data = (const uint8_t *)"Hoj";
+              sock.write(data, 3);
+              sock.read(
+                [&sock](const uint8_t *data, std::size_t length, boost::system::error_code ec)
+              {
+                std::cerr << "Client received " << std::string((const char*)data, length) << std::endl;
+              });*/
+            }
           });
-        } else {
-          std::cerr << "Client could not connect!" << std::endl;
         }
       });
     }
@@ -321,8 +324,9 @@ main(int argc, char **argv)
       // std::cerr << "Client" << std::endl;
       // client(nickname);
     // }
-  } catch(const std::exception *e) {
-     std::cerr << e->what() << std::endl;
-     throw;
+  } catch(boost::exception &e) {
+    std::cerr
+      << "Unexpected exception, diagnostic information follows:" << std::endl
+      << boost::current_exception_diagnostic_information();
   }
 }

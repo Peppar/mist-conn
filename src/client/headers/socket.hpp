@@ -76,12 +76,9 @@ public:
    * Callback types
    */
   using write_callback = std::function<void(std::size_t, boost::system::error_code)>;
-  //using read_callback = std::function<void(const uint8_t *, std::size_t)>;
+  using read_callback = std::function<void(const uint8_t *, std::size_t, boost::system::error_code)>;
   using connect_callback = std::function<void(boost::system::error_code)>;
   using handshake_callback = std::function<void(boost::system::error_code)>;
-  
-  using consumer_callback = std::function<std::size_t(const uint8_t *, std::size_t)>;
-  //using provider_callback = std::function<void(consumer_callback&)>;
 
 protected:
 
@@ -98,14 +95,11 @@ protected:
       On,
     } state;
     
-    //circular_buffer<8192> buffer;
     const uint8_t *data;
     std::size_t length;
-    std::size_t written;
+    std::size_t nwritten;
     
     write_callback cb;
-    //provider_callback prov;
-    //consumer_callback cons;
   } w;
 
   /*
@@ -120,12 +114,11 @@ protected:
       Continuous,
     } state;
     
-    //std::array<uint8_t, 8192> buffer;
-    circular_buffer<8192> buffer;
+    std::array<uint8_t, 8192> buffer;
     std::size_t length;
-    //uint8_t *data;
-    //read_callback cb;
-    //consumer_callback cons;
+    std::size_t nread;
+    
+    read_callback cb;
   } r;
 
   /*
@@ -175,7 +168,7 @@ protected:
   /*
    * Called when the socket is closed.
    */
-  void _close();
+  void _close(boost::system::error_code ec);
   
 public:
 
@@ -186,7 +179,7 @@ public:
   /*
    * Connect to the specified address.
    */
-  void connect(PRNetAddr addr, connect_callback cb = nullptr);
+  void connect(PRNetAddr *addr, connect_callback cb = nullptr);
 
   /*
    * Perform a TLS handshake.
@@ -194,41 +187,26 @@ public:
   void handshake(handshake_callback cb = nullptr);
 
   /*
-   * Read once, for small, one-shot packets (~less than 1kB)
-   */
-  //void readOnce(const uint8_t *data, std::size_t length, read_callback cb);
-  
-  /*
    * Read a fixed-length packet.
    */
-  void readOnce(std::size_t length, consumer_callback cons);
+  void readOnce(std::size_t length, read_callback cb);
 
   /*
-   * Read.
+   * Read indefinitely.
    */
-  void read(consumer_callback cons);
+  void read(read_callback cb);
 
   /*
-   * Write once.
+   * Write.
    */
   void write(const uint8_t *data, std::size_t length,
     write_callback cb = nullptr);
 
   /*
-   * Write once.
+   * Close the socket.
    */
-  //void writeOnce(provider_callback cons);
-
-  /*
-   * Write.
-   */
-  //void write(provider_callback prov);
-
-  /*
-   * Set the producer callback for outgoing data.
-   */
-  //void setSendProducer(producer_callback prod);
-
+  void close();
+  
   /*
    * Returns true iff there is data to be written.
    */
@@ -238,20 +216,6 @@ public:
    * Returns true iff we are ready to listen for reads.
    */
   bool isReading() const;
-  
-  //private:
-  
-  //std::size_t receiveProducer(const uint8_t *, std::size_t);
-  
-  //std::size_t sendConsumer(const uint8_t *, std::size_t);
-  
-  /*
-   * Creates a self-contained writer provider to write a fixed-size
-   * packet. This is intended for use in handshaking, and with
-   * relatively small packets.
-   */
-  //static provider_callback createProvider(const uint8_t *data, std::size_t length);
-
 };
 
 }

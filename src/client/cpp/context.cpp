@@ -52,6 +52,7 @@
 #include <boost/optional.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
+#include <boost/throw_exception.hpp>
 
 #include "error/mist.hpp"
 #include "error/nss.hpp"
@@ -81,6 +82,7 @@ std::string to_hex(It begin, It end)
     text += to_hex(uint8_t(*(begin++)));
   return text;
 }
+
 std::string to_hex(SECItem *item)
 {
   return to_hex((uint8_t *)item->data, (uint8_t *)(item->data + item->len));
@@ -114,24 +116,14 @@ std::string certPubKeyHash(CERTCertificate *cert)
   return hash(derPubKey->data, derPubKey->data + derPubKey->len);
 }
 
-std::string getPRError() {
-  auto length = PR_GetErrorTextLength();
-  if (!length)
-    return "Error " + std::to_string(PR_GetError());
-  char* c = new char[length + 1];
-  PR_GetErrorText(c);
-  auto error = std::string(c);
-  delete[] c;
-  return error;
-}
-
 /*
  * Initialize NSS with the given database directory
  */
 void nss_init(std::string dbdir)
 {
   if (NSS_InitReadWrite(dbdir.c_str()) != SECSuccess)
-    throw new std::runtime_error("Error while initializing NSS: " + getPRError());
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to initialize NSS"));
   
   PK11_SetPasswordFunc([](PK11SlotInfo *info, PRBool retry, void *arg) -> char * {
     std::cerr << "password func" << std::endl;
@@ -286,9 +278,9 @@ c_unique_ptr<PRFileDesc> RdvSocket::accept()
   c_unique_ptr<PRFileDesc> acceptedFd =
     to_unique(PR_Accept(fd.get(), nullptr, PR_INTERVAL_NO_TIMEOUT));
   if (!acceptedFd)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to accept incoming connection");
-
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to accept incoming connection"));
+  
   return std::move(acceptedFd);
 }
 
@@ -299,8 +291,8 @@ void SSLContext::initializeSecurity(c_unique_ptr<PRFileDesc> &fd)
 {
   auto sslSock = to_unique(SSL_ImportFD(nullptr, fd.get()));
   if (!sslSock)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to wrap SSL socket");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to wrap SSL socket"));
 
   /* We no longer own the old pointer */
   fd.release();
@@ -310,8 +302,8 @@ void SSLContext::initializeSecurity(c_unique_ptr<PRFileDesc> &fd)
   /* All SSL sockets need SSL_SECURITY, enable it here. For sockets created
      by accepting a rendez-vous socket, this setting will be inherited */
   if (SSL_OptionSet(fd.get(), SSL_SECURITY, PR_TRUE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_SECURITY setting");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_SECURITY setting"));
 }
 
 /*
@@ -319,48 +311,47 @@ void SSLContext::initializeSecurity(c_unique_ptr<PRFileDesc> &fd)
  */
 void SSLContext::initializeTLS(Socket &sock)
 {
-  //c_unique_ptr<PRFileDesc> &fd, bool server
   PRFileDesc *sslfd = sock.fileDesc();
   
   /* Set certificate options */
   if (SSL_OptionSet(sslfd, SSL_REQUEST_CERTIFICATE, PR_TRUE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_REQUEST_CERTIFICATE option");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_REQUEST_CERTIFICATE option"));
   if (SSL_OptionSet(sslfd, SSL_REQUIRE_CERTIFICATE , PR_TRUE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_REQUIRE_CERTIFICATE option");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_REQUIRE_CERTIFICATE option"));
   
   /* Enable only TLS */
   if (SSL_OptionSet(sslfd, SSL_ENABLE_SSL2, PR_FALSE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_ENABLE_SSL2 option");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_ENABLE_SSL2 option"));
   if (SSL_OptionSet(sslfd, SSL_ENABLE_SSL3, PR_FALSE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_ENABLE_SSL3 option");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_ENABLE_SSL3 option"));
   if (SSL_OptionSet(sslfd, SSL_ENABLE_TLS, PR_TRUE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_ENABLE_TLS option");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_ENABLE_TLS option"));
 
   /* TODO: Require latest TLS version */
   SSLVersionRange sslverrange = {
     SSL_LIBRARY_VERSION_TLS_1_2, SSL_LIBRARY_VERSION_TLS_1_2
   };
   if (SSL_VersionRangeSet(sslfd, &sslverrange) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to set SSL version");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to set SSL version"));
 
   /* Disable session cache */
   if (SSL_OptionSet(sslfd, SSL_NO_CACHE, PR_TRUE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_NO_CACHE option");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_NO_CACHE option"));
   
   /* Enable ALPN, disable NPN */
   if (SSL_OptionSet(sslfd, SSL_ENABLE_NPN, PR_TRUE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_ENABLE_NPN option");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_ENABLE_NPN option"));
   if (SSL_OptionSet(sslfd, SSL_ENABLE_ALPN, PR_TRUE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_ENABLE_ALPN option");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_ENABLE_ALPN option"));
 
   /* Set the only supported protocol to HTTP/2 */
   std::vector<unsigned char> protocols(1 + NGHTTP2_PROTO_VERSION_ID_LEN);
@@ -373,32 +364,32 @@ void SSLContext::initializeTLS(Socket &sock)
     assert (it == protocols.end());
   }
   if (SSL_SetNextProtoNego(sslfd, protocols.data(), protocols.size()) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to set protocol negotiation");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to set protocol negotiation"));
   if (SSL_AuthCertificateHook(sslfd, auth_certificate, &sock) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to set AuthCertificateHook");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to set AuthCertificateHook"));
 
   /* Client/server specific options */
   if (SSL_OptionSet(sslfd, SSL_HANDSHAKE_AS_SERVER, sock.server ? PR_TRUE : PR_FALSE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_HANDSHAKE_AS_SERVER option");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_HANDSHAKE_AS_SERVER option"));
   if (SSL_OptionSet(sslfd, SSL_HANDSHAKE_AS_CLIENT, sock.server ? PR_FALSE : PR_TRUE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_HANDSHAKE_AS_CLIENT option");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_HANDSHAKE_AS_CLIENT option"));
 
   if (!sock.server) {
     /* Set client certificate and key callback */
     if (SSL_GetClientAuthDataHook(sslfd, nss_get_client_cert,
                                   (void *)nickname) != SECSuccess)
-      throw new boost::system::system_error(make_nss_error(),
-        "Unable to set GetClientAuthDataHook");
+      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+        "Unable to set GetClientAuthDataHook"));
   }
 
   /* TODO: What does this do? */
   if(SSL_ResetHandshake(sslfd, sock.server ? PR_TRUE : PR_FALSE) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to reset handshake");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to reset handshake"));
 }
 
 /*
@@ -408,15 +399,15 @@ c_unique_ptr<PRFileDesc> SSLContext::openSocket()
 {
   auto fd = to_unique(PR_OpenTCPSocket(PR_AF_INET));
   if (!fd)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to open TCP socket");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to open TCP socket"));
 
   PRSocketOptionData sockOpt;
   sockOpt.option = PR_SockOpt_Nonblocking;
   sockOpt.value.non_blocking = PR_TRUE;
   if (PR_SetSocketOption(fd.get(), &sockOpt) != PR_SUCCESS)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to set PR_SockOpt_Nonblocking");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to set PR_SockOpt_Nonblocking"));
   
   return std::move(fd);
 }
@@ -438,28 +429,28 @@ c_unique_ptr<PRFileDesc> SSLContext::openRdvSocket(uint16_t port, std::size_t ba
   /* Set server certificate and private key */
   auto authData = get_auth_data((char *)nickname, SSL_RevealPinArg(fd.get()));
   if (!authData.first || !authData.second)
-    throw new boost::system::system_error(make_mist_error(MIST_ERR_NO_KEY_OR_CERT),
-      "Unable to find private key or certificate for rendez-vous socket");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_mist_error(MIST_ERR_NO_KEY_OR_CERT),
+      "Unable to find private key or certificate for rendez-vous socket"));
 
   if (SSL_ConfigSecureServer(fd.get(),
       authData.first.get(), authData.second.get(),
       NSS_FindCertKEAType(authData.first.get())) != SECSuccess)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to set server certificate and key for rendez-vous socket");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to set server certificate and key for rendez-vous socket"));
 
   /* Initialize addr to localhost:port */
   PRNetAddr addr;
   if (PR_InitializeNetAddr(PR_IpAddrLoopback, port, &addr) != PR_SUCCESS)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to initialize address for rendez-vous socket");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to initialize address for rendez-vous socket"));
 
   if (PR_Bind(fd.get(), &addr) != PR_SUCCESS)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to bind rendez-vous socket to port " + std::to_string(port));
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to bind rendez-vous socket to port " + std::to_string(port)));
 
   if (PR_Listen(fd.get(), backlog) != PR_SUCCESS)
-    throw new boost::system::system_error(make_nss_error(),
-      "Unable to start listening to rendez-vous socket");
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to start listening to rendez-vous socket"));
 
   return std::move(fd);
 }
@@ -550,7 +541,18 @@ void SSLContext::eventLoop()
     /* Handle the SSL sockets */
     for (auto i = sslSocks.begin(); j != pds.end(); ++i, ++j) {
       PRInt16 out_flags = j->out_flags;
-      if (out_flags) {
+      if (out_flags & PR_POLL_ERR) {
+        /* Get the error code by performing a bogus read, expected to fail */
+        boost::system::error_code ec;
+        if (PR_Read(i->fileDesc(), nullptr, 0) != PR_SUCCESS)
+          ec = make_nss_error();
+        else
+          ec = make_nss_error(PR_UNKNOWN_ERROR);
+        i->_close(ec);
+      } else if (out_flags & PR_POLL_NVAL) {
+        /* Invalid file descriptor */
+        i->_close(make_nss_error(PR_BAD_DESCRIPTOR_ERROR));
+      } else if (out_flags) {
         switch (i->state) {
         case Socket::State::Handshaking:
           if (out_flags & PR_POLL_READ) {

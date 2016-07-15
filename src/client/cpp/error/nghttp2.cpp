@@ -2,6 +2,9 @@
 #include <nghttp2/nghttp2.h>
 #include "error/nghttp2.hpp"
 
+namespace mist
+{
+
 namespace
 {
 
@@ -16,9 +19,9 @@ class nghttp2_error_category : public boost::system::error_category
   {
     switch (ev) {
     case NGHTTP2_ERR_INVALID_ARGUMENT:
-      return "NGHTTP2_ERR_INVALID_ARGUMENT"
+      return "NGHTTP2_ERR_INVALID_ARGUMENT";
     case NGHTTP2_ERR_BUFFER_ERROR:
-      return "NGHTTP2_ERR_BUFFER_ERROR"
+      return "NGHTTP2_ERR_BUFFER_ERROR";
     case NGHTTP2_ERR_UNSUPPORTED_VERSION:
       return "NGHTTP2_ERR_UNSUPPORTED_VERSION";
     case NGHTTP2_ERR_WOULDBLOCK:
@@ -33,8 +36,6 @@ class nghttp2_error_category : public boost::system::error_category
       return "NGHTTP2_ERR_DEFERRED";
     case NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE:
       return "NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE";
-    case NGHTTP2_ERR_STREAM_CLOSED:
-      return "NGHTTP2_ERR_STREAM_CLOSED";
     case NGHTTP2_ERR_STREAM_CLOSED:
       return "NGHTTP2_ERR_STREAM_CLOSED";
     case NGHTTP2_ERR_STREAM_CLOSING:
@@ -111,4 +112,6 @@ const boost::system::error_category &nghttp2_category() noexcept
 boost::system::error_code make_nghttp2_error(nghttp2_error ev)
 {
   return boost::system::error_code(ev, nghttp2_category());
+}
+
 }
