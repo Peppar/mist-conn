@@ -12,7 +12,9 @@ namespace h2
 {
   
 Response::Response(Stream &stream)
-  : _stream(stream), _statusCode(0), _contentLength(0) {}
+  : _stream(stream),
+    _statusCode(0),
+    _contentLength(0) {}
 
 int
 Response::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,

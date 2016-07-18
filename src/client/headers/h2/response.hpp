@@ -14,6 +14,18 @@ class Stream;
 
 class Response
 {
+protected:
+
+  Stream &_stream;
+  
+  header_map _headers;
+  
+  std::int64_t _contentLength;
+  
+  int _statusCode;
+  
+  data_callback _onData;
+  
 public:
   
   Response(Stream &stream);
@@ -29,17 +41,6 @@ public:
   std::int64_t contentLength() const;
   int statusCode() const;
 
-protected:
-
-  Stream &_stream;
-  
-  std::int64_t _contentLength;
-  int _statusCode;
-  
-  header_map _headers;
-  
-  data_callback _onData;
-  
 };
 
 }

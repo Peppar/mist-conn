@@ -11,8 +11,11 @@ namespace h2
 {
 
 Stream::Stream(Session &session)
-  : _session(session), _streamId(-1), _request(*this), _response(*this),
-    _stopped(false)  {}
+  : _session(session),
+    _streamId(-1),
+    _request(*this),
+    _response(*this)
+  {}
 
 Session &
 Stream::session()
@@ -94,28 +97,26 @@ Stream::writeTrailer(const header_map &headers, boost::system::error_code &ec)
 void
 Stream::cancel(std::uint32_t errorCode)
 {
-  if (_stopped) {
-    /* Already stopped */
+  if (session().isStopped()) {
+    /* The whole session is stopped */
     return;
   }
 
-  /* TODO: Check for error */
   nghttp2_submit_rst_stream(session().nghttp2Session(), NGHTTP2_FLAG_NONE, streamId(), errorCode);
-  
+
   session().signalWrite();
 }
 
 void
 Stream::resume()
 {
-  if (_stopped) {
-    /* Already stopped */
+  if (session().isStopped()) {
+    /* The whole session is stopped */
     return;
   }
   
-  /* TODO: Check for error */
   nghttp2_session_resume_data(session().nghttp2Session(), streamId());
-
+  
   session().signalWrite();
 }
 
@@ -178,6 +179,18 @@ Stream::onFrameRecv(const nghttp2_frame *frame)
     break;
   }
   }
+  return 0;
+}
+
+int
+Stream::onFrameSend(const nghttp2_frame *frame)
+{
+  return 0;
+}
+
+int
+Stream::onFrameNotSend(const nghttp2_frame *frame, int errorCode)
+{
   return 0;
 }
 

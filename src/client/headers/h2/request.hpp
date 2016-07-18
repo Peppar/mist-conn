@@ -24,6 +24,30 @@ class Stream;
 
 class Request
 {
+protected:
+
+  Stream &_stream;
+  
+  header_map _headers;
+
+  std::int64_t _contentLength;
+  
+  int _statusCode;
+  
+  std::string _method;
+  
+  std::string _path;
+  
+  data_callback _onData;
+  
+  close_callback _onClose;
+  
+  response_callback _onResponse;
+  
+  request_callback _onPush;
+  
+  generator_callback _onRead;
+
 public:
 
   Request(Stream &stream);
@@ -55,22 +79,6 @@ public:
   Stream &stream();
 
   /* void writeTrailer(header_map headers, boost::system::error_code &ec); */
-
-protected:
-
-  Stream &_stream;
-  header_map _headers;
-
-  std::int64_t _contentLength;
-  int _statusCode;
-  std::string _method;
-  std::string _path;
-  
-  data_callback _onData;
-  close_callback _onClose;
-  response_callback _onResponse;
-  request_callback _onPush;
-  generator_callback _onRead;
 
 };
 

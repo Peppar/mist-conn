@@ -56,6 +56,9 @@
 #include "socket.hpp"
 
 #include "h2/session.hpp"
+#include "h2/stream.hpp"
+#include "h2/request.hpp"
+#include "h2/response.hpp"
 
 namespace
 {
@@ -138,7 +141,7 @@ void handshakeSOCKS5(mist::Socket &sock,
        final packet size */
     sock.readOnce(5,
       [=, &sock, cb(std::move(cb))]
-      (const uint8_t *data, std::size_t length, boost::system::error_code ec)
+      (const uint8_t *data, std::size_t length, boost::system::error_code ec) mutable
     {
       if (ec) {
         cb("", ec);
@@ -230,103 +233,3 @@ void connectTor(mist::Socket &sock, uint16_t torPort,
   });
 }
 
-int
-main(int argc, char **argv)
-{
-  //nss_init("db");
-  try {
-    assert(argc == 3);
-    bool isServer = atoi(argv[1]);
-    char *nickname = argv[2];
-    int port = isServer ? 9150 : 9151;
-    
-    mist::SSLContext sslCtx(nickname);
-    /*
-    sslCtx.serve(port,
-      [](mist::Socket &sock)
-    {
-      std::cerr << "New connection !!! " << std::endl;
-      sock.handshake(
-        [&sock](boost::system::error_code ec)
-      {
-        if (ec) {
-          std::cerr << "Error!!!" << std::endl;
-          return;
-        }
-        std::cerr << "Handshaked! " << std::endl;
-        auto sessionId = to_unique(SSL_GetSessionID(sock.fileDesc()));
-        std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
-        const uint8_t *data = (const uint8_t *)"Hus";
-        sock.write(data, 3);
-        sock.read(
-          [&sock](const uint8_t *data, std::size_t length, boost::system::error_code ec)
-        {
-          if (ec)
-            std::cerr << "Read error!!!" << std::endl;
-          std::cerr << "Server received " << std::string((const char*)data, length) << std::endl;
-        });
-      });
-    });
-    */
-    if (!isServer) {
-      // Try connect
-      PRNetAddr addr;
-      
-      if (PR_StringToNetAddr(
-        "130.211.116.44",
-        &addr) != PR_SUCCESS)
-        throw new std::runtime_error("PR_InitializeNetAddr failed");
-      addr.inet.port = PR_htons(443);
-      //if (PR_InitializeNetAddr(PR_IpAddrLoopback, 9150, &addr) != PR_SUCCESS)
-      //  throw new std::runtime_error("PR_InitializeNetAddr failed");
-    
-      mist::Socket &sock = sslCtx.openClientSocket();
-      std::cerr << "Trying to connect..." << std::endl;
-      sock.connect(&addr,
-        [&sock](boost::system::error_code ec)
-      {
-        if (ec) {
-          std::cerr << "Could not connect: " << ec.message() << std::endl;
-        } else {
-          std::cerr << "Connected! Initializing TLS..:" << std::endl;
-          sock.handshake(
-            [&sock](boost::system::error_code ec)
-          {
-            if (ec) {
-              std::cerr << "Could not handshake: " << ec.message() << std::endl;
-            } else {
-              std::cerr << "Handshaked! " << std::endl;
-              
-              /*
-              auto sessionId = to_unique(SSL_GetSessionID(sock.fileDesc()));
-              std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
-
-              const uint8_t *data = (const uint8_t *)"Hoj";
-              sock.write(data, 3);
-              sock.read(
-                [&sock](const uint8_t *data, std::size_t length, boost::system::error_code ec)
-              {
-                std::cerr << "Client received " << std::string((const char*)data, length) << std::endl;
-              });*/
-            }
-          });
-        }
-      });
-    }
-
-    sslCtx.exec();
-    //ventLoop(port, nickname, isServer ? 0 : 9150);
-    //auto cert = createRootCert(privk, pubk, hashAlgTag, );
-    // if (isServer) {
-      // std::cerr << "Server" << std::endl;
-      // server(nickname);
-    // } else {
-      // std::cerr << "Client" << std::endl;
-      // client(nickname);
-    // }
-  } catch(boost::exception &e) {
-    std::cerr
-      << "Unexpected exception, diagnostic information follows:" << std::endl
-      << boost::current_exception_diagnostic_information();
-  }
-}

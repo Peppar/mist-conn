@@ -484,7 +484,7 @@ void SSLContext::eventLoop()
       case Socket::State::Handshaking:
       {
         std::cerr << "Socket handshaking poll" << std::endl;
-        PRInt16 in_flags = PR_POLL_READ|PR_POLL_EXCEPT;
+        PRInt16 in_flags = PR_POLL_READ;
         pds.push_back(PRPollDesc{i->fileDesc(), in_flags, 0});
         break;
       }
@@ -498,9 +498,9 @@ void SSLContext::eventLoop()
       case Socket::State::Connected:
       case Socket::State::Open:
       {
-        PRInt16 in_flags = (i->isWriting() ? PR_POLL_WRITE : 0)
-          | (i->isReading() ? PR_POLL_READ : 0)
-          | PR_POLL_EXCEPT;
+        PRInt16 in_flags
+          = (i->isReading() ? PR_POLL_READ : 0)   // 1
+          | (i->isWriting() ? PR_POLL_WRITE : 0); // 2
         std::cerr << "Socket polling with flags " << in_flags << std::endl;
         pds.push_back(PRPollDesc{i->fileDesc(), in_flags, 0});
         break;
@@ -515,7 +515,7 @@ void SSLContext::eventLoop()
     }
     
     PRInt32 n = PR_Poll(pds.data(), pds.size(),
-      PR_MillisecondsToInterval(5000));
+      PR_MillisecondsToInterval(10000));
     if (n == -1)
       throw new std::runtime_error("Poll failed");
     if (!n) {
@@ -548,29 +548,20 @@ void SSLContext::eventLoop()
           ec = make_nss_error();
         else
           ec = make_nss_error(PR_UNKNOWN_ERROR);
-        i->_close(ec);
+        i->close(ec);
       } else if (out_flags & PR_POLL_NVAL) {
         /* Invalid file descriptor */
-        i->_close(make_nss_error(PR_BAD_DESCRIPTOR_ERROR));
+        i->close(make_nss_error(PR_BAD_DESCRIPTOR_ERROR));
       } else if (out_flags) {
         switch (i->state) {
         case Socket::State::Handshaking:
-          if (out_flags & PR_POLL_READ) {
-            std::cerr << "Socket handshaking PR_POLL_READ" << std::endl;
-            i->_handshake();
-          }
-          if (out_flags & PR_POLL_EXCEPT) {
-            std::cerr << "Socket handshaking PR_POLL_EXCEPT" << std::endl;
-          }
+          assert (out_flags & PR_POLL_READ);
+          std::cerr << "Socket handshaking PR_POLL_READ" << std::endl;
+          i->_handshake();
           break;
         case Socket::State::Connecting:
-          if (out_flags & PR_POLL_WRITE) {
-            std::cerr << "Socket Connecting PR_POLL_WRITE" << std::endl;
-            i->_connectContinue(out_flags);
-          }
-          if (out_flags & PR_POLL_EXCEPT) {
-            std::cerr << "Socket Connecting PR_POLL_EXCEPT" << std::endl;
-          }
+          std::cerr << "Socket Connecting" << std::endl;
+          i->_connectContinue(out_flags);
           break;
         case Socket::State::Connected:
         case Socket::State::Open:
@@ -581,9 +572,6 @@ void SSLContext::eventLoop()
           if (out_flags & PR_POLL_READ) {
             std::cerr << "Socket Open PR_POLL_READ" << std::endl;
             i->_read();
-          }
-          if (out_flags & PR_POLL_EXCEPT) {
-            std::cerr << "Socket Open PR_POLL_EXCEPT" << std::endl;
           }
           break;
         }

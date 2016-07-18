@@ -20,14 +20,14 @@ namespace mist
 namespace h2
 {
 
-Session::Session(Socket &sock)
+Session::Session(Socket &sock, bool isServer)
   : sock(sock),
     h2session(to_unique<nghttp2_session>()),
+    _isServer(isServer),
     _sending(false),
+    _stopped(false),
     _insideCallback(false)
 {
-  using namespace std::placeholders;
-  
   /* Create the nghttp2_session_callbacks object */
   c_unique_ptr<nghttp2_session_callbacks> cbs
     = to_unique<nghttp2_session_callbacks>();
@@ -36,6 +36,16 @@ Session::Session(Socket &sock)
     nghttp2_session_callbacks_new(&cbsPtr);
     cbs = to_unique(cbsPtr);
   }
+  
+  /* Set on error callback */
+  nghttp2_session_callbacks_set_error_callback(cbs.get(),
+    [](nghttp2_session */*session*/, const char *message, std::size_t length,
+       void *user_data) -> int
+  {
+    Session &sess = *static_cast<Session *>(user_data);
+    std::cerr << "nghttp signalled error: " << std::string(message, length) << std::endl;
+    return 0;
+  });
   
   /* Set on begin headers callback */
   nghttp2_session_callbacks_set_on_begin_headers_callback(cbs.get(),
@@ -65,6 +75,34 @@ Session::Session(Socket &sock)
       return 0;
     
     return stream->onHeader(frame, name, namelen, value, valuelen, flags);
+  });
+  
+  /* Set on stream frame send callback */
+  nghttp2_session_callbacks_set_on_frame_send_callback(cbs.get(),
+    [](nghttp2_session */*session*/, const nghttp2_frame *frame,
+       void *user_data) -> int
+  {
+    /* Delegate send event to stream */   
+    Session &sess = *static_cast<Session *>(user_data);
+    boost::optional<Stream&> stream = sess.stream(frame->hd.stream_id);
+    if (!stream)
+      return 0;
+    
+    return stream->onFrameSend(frame);
+  });
+  
+  /* Set on frame not send callback */
+  nghttp2_session_callbacks_set_on_frame_not_send_callback(cbs.get(),
+    [](nghttp2_session */*session*/, const nghttp2_frame *frame,
+       int errorCode, void *user_data) -> int
+  {
+    /* Delegate frame not send event to stream */   
+    Session &sess = *static_cast<Session *>(user_data);
+    boost::optional<Stream&> stream = sess.stream(frame->hd.stream_id);
+    if (!stream)
+      return 0;
+    
+    return stream->onFrameNotSend(frame, errorCode);
   });
   
   /* Set on frame receive callback */
@@ -113,10 +151,15 @@ Session::Session(Socket &sock)
     return rv;
   });
   
-  /* Create the nghttp2_session object */
+  /* Create the nghttp2_session and assign it to h2session */
   {
     nghttp2_session *sessPtr = nullptr;
-    auto rv = nghttp2_session_client_new(&sessPtr, cbs.get(), this);
+    int rv;
+    if (isServer) {
+      rv = nghttp2_session_server_new(&sessPtr, cbs.get(), this);
+    } else {
+      rv = nghttp2_session_client_new(&sessPtr, cbs.get(), this);
+    }
     if (rv) {
       BOOST_THROW_EXCEPTION(boost::system::system_error(
         make_nghttp2_error(static_cast<nghttp2_error>(rv)),
@@ -124,9 +167,34 @@ Session::Session(Socket &sock)
     }
     h2session = to_unique(sessPtr);
   }
-
+  
+  /* Send connection settings */
+  {
+    std::vector<nghttp2_settings_entry> iv{
+      {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100},
+    };
+    // if (!isServer)
+    // iv.emplace_back(nghttp2_settings_entry{NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, NGHTTP2_INITIAL_WINDOW_SIZE});
+    auto rv = nghttp2_submit_settings(h2session.get(), NGHTTP2_FLAG_NONE,
+                                      iv.data(), iv.size());
+    if (rv) {
+      BOOST_THROW_EXCEPTION(boost::system::system_error(
+        make_nghttp2_error(static_cast<nghttp2_error>(rv)),
+        "Unable to send HTTP/2 settings"));
+    }
+  }
+  
+  /* Bind the socket read callback */
+  {
+    using namespace std::placeholders;
+    sock.read(std::bind(&Session::readCallback, this, _1, _2, _3));
+  }
+  
+  /* Write the first data */
+  signalWrite();
+  
   /* TODO: Figure out why this is necessary */
-  const uint32_t windowSize = 256 * 1024 * 1024;
+  /*const std::uint32_t windowSize = 256 * 1024 * 1024;
   std::array<nghttp2_settings_entry, 2> iv{
       {{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100},
        // typically client is just a *sink* and just process data as
@@ -138,8 +206,7 @@ Session::Session(Socket &sock)
   // Increase connection window size up to window_size
   nghttp2_submit_window_update(h2session.get(), NGHTTP2_FLAG_NONE, 0,
                                windowSize - NGHTTP2_INITIAL_CONNECTION_WINDOW_SIZE);
-
-  sock.read(std::bind(&Session::readCallback, this, _1, _2, _3));
+*/
 }
 
 boost::optional<Stream&> 
@@ -148,6 +215,18 @@ Session::stream(std::int32_t streamId) {
   if (it == _streams.end())
     return boost::none;
   return *it->second;
+}
+
+bool
+Session::isStopped() const 
+{
+  return _stopped;
+}
+
+bool
+Session::isServer() const
+{
+  return _isServer;
 }
 
 std::unique_ptr<Stream>
@@ -177,35 +256,125 @@ Session::createPushStream(std::int32_t streamId)
   insertStream(std::move(strm));
 }
 
-void
-Session::_error(boost::system::error_code ec)
+bool Session::alive() const
 {
+  return nghttp2_session_want_read(h2session.get())
+      || nghttp2_session_want_write(h2session.get())
+      || _sending;
+}
+
+void Session::setOnError(error_callback cb)
+{
+  _onError = std::move(cb);
+}
+
+void
+Session::error(boost::system::error_code ec)
+{
+  if (_onError)
+    _onError(ec);
+  stop();
 }
 
 void Session::closeStream(Stream &stream)
 {
 }
-  
+
 void
 Session::stop()
 {
+  if (_stopped)
+    return;
+  
+  _stopped = true;
+  sock.close();
 }
 
-boost::optional<Stream&>
+void
+Session::shutdown() 
+{
+  if (_stopped)
+    return;
+
+  nghttp2_session_terminate_session(h2session.get(), NGHTTP2_NO_ERROR);
+  signalWrite();
+}
+
+namespace
+{
+
+nghttp2_nv make_nghttp2_nv(const char *name, const char *value,
+                           std::size_t nameLength, std::size_t valueLength,
+                           std::uint8_t flags)
+{
+  return nghttp2_nv{
+    const_cast<std::uint8_t *>(
+      reinterpret_cast<const std::uint8_t*>(name)),
+    const_cast<std::uint8_t *>(
+      reinterpret_cast<const std::uint8_t*>(value)),
+    nameLength, valueLength, flags
+  };
+}
+
+nghttp2_nv make_nghttp2_nv(std::string name, const std::string &value,
+                           bool noIndex = false)
+{
+  return make_nghttp2_nv(name.data(), value.data(), name.length(), value.length(),
+                         noIndex ? NGHTTP2_NV_FLAG_NO_INDEX : NGHTTP2_NV_FLAG_NONE);
+}
+
+template <std::size_t N>
+nghttp2_nv make_nghttp2_nv(const char(&name)[N], const std::string &value,
+                           bool noIndex = false)
+{
+  return make_nghttp2_nv(name, value.data(), N - 1, value.length(),
+                         NGHTTP2_NV_FLAG_NO_COPY_NAME
+                         | (noIndex ? NGHTTP2_NV_FLAG_NO_INDEX : 0));
+}
+
+template <std::size_t N, std::size_t M>
+nghttp2_nv make_nghttp2_nv(const char(&name)[N], const char(&value)[M],
+                           bool noIndex = false)
+{
+  return make_nghttp2_nv(name, value, N - 1, M - 1,
+                         NGHTTP2_NV_FLAG_NO_COPY_NAME | NGHTTP2_NV_FLAG_NO_COPY_VALUE
+                         | (noIndex ? NGHTTP2_NV_FLAG_NO_INDEX : 0));
+}
+
+template <std::size_t N>
+nghttp2_nv make_nghttp2_nv(std::string name, const char(&value)[N],
+                           bool noIndex = false)
+{
+  return make_nghttp2_nv(name.data(), value, name.length(), N - 1,
+                         NGHTTP2_NV_FLAG_NO_COPY_VALUE
+                         | (noIndex ? NGHTTP2_NV_FLAG_NO_INDEX : 0));
+}
+
+}
+
+boost::optional<Request&>
 Session::submit(boost::system::error_code &ec,
                 const std::string &method,
                 const std::string &path,
-                generator_callback cb,
-                header_map headers)
+                const std::string &authority,
+                header_map headers,
+                generator_callback cb)
 {
   ec.clear();
   std::unique_ptr<Stream> strm = createStream();
   Request &req = strm->request();
   
-  auto nva = std::vector<nghttp2_nv>();
-  /* TODO: Headers */
-  //nva.push_back()
+  auto nvs = std::vector<nghttp2_nv>();
+  nvs.reserve(headers.size() + 4);
+  nvs.emplace_back(make_nghttp2_nv(":method", method));
+  nvs.emplace_back(make_nghttp2_nv(":path", path));
+  nvs.emplace_back(make_nghttp2_nv(":scheme", "https"));
+  if (authority.length())
+    nvs.emplace_back(make_nghttp2_nv(":authority", authority));
   
+  for (auto &h : headers) {
+    nvs.emplace_back(make_nghttp2_nv(h.first, h.second.first));
+  }
   
   nghttp2_data_provider *prdptr = nullptr;
   nghttp2_data_provider prd;
@@ -214,8 +383,8 @@ Session::submit(boost::system::error_code &ec,
     req.setOnRead(std::move(cb));
     prd.source.ptr = strm.get();
     prd.read_callback =
-      [](nghttp2_session *session, std::int32_t stream_id, std::uint8_t *data,
-         std::size_t length, uint32_t *flags, nghttp2_data_source *source,
+      [](nghttp2_session */*session*/, std::int32_t stream_id, std::uint8_t *data,
+         std::size_t length, std::uint32_t *flags, nghttp2_data_source *source,
          void *userp) -> ssize_t {
         Stream &strm = *static_cast<Stream *>(source->ptr);
         return strm.request().onRead(data, length, flags);
@@ -224,7 +393,7 @@ Session::submit(boost::system::error_code &ec,
   }
   
   std::int32_t streamId = nghttp2_submit_request(h2session.get(), nullptr,
-                                                 nva.data(), nva.size(),
+                                                 nvs.data(), nvs.size(),
                                                  prdptr, strm.get());
   if (streamId < 0) {
     ec = make_nghttp2_error(static_cast<nghttp2_error>(streamId));
@@ -234,7 +403,7 @@ Session::submit(boost::system::error_code &ec,
   signalWrite();
 
   strm->setStreamId(streamId);
-  return insertStream(std::move(strm));
+  return insertStream(std::move(strm)).request();
 }
 
 namespace
@@ -253,14 +422,14 @@ Session::signalWrite()
 {
   if (_insideCallback)
     return;
-  _write();
+  write();
 }
   
 /*
  * Write.
  */
 void
-Session::_write()
+Session::write()
 {
   if (_sending)
     /* There is already a send in progress */
@@ -277,8 +446,7 @@ Session::_write()
 
     if (nsend < 0) {
       /* Error */
-      _error(make_nghttp2_error(static_cast<nghttp2_error>(nsend)));
-      stop();
+      error(make_nghttp2_error(static_cast<nghttp2_error>(nsend)));
       return;
     } else if (nsend == 0) {
       /* No more data to send */
@@ -288,17 +456,17 @@ Session::_write()
       length = nsend;
     }
   }
-
   sock.write(data, length,
     [=] // , anchor(shared_from_this())
     (std::size_t nsent, boost::system::error_code ec)
   {
+    _sending = false;
     if (ec) {
-      _error(make_nghttp2_error(static_cast<nghttp2_error>(length)));
+      error(make_nghttp2_error(static_cast<nghttp2_error>(length)));
     } else if (length != nsent) {
-      _error(make_mist_error(MIST_ERR_ASSERTION));
+      error(make_mist_error(MIST_ERR_ASSERTION));
     }
-    _write();
+    write();
   });
 }
 
@@ -310,7 +478,14 @@ Session::readCallback(const std::uint8_t *data, std::size_t length,
                       boost::system::error_code ec)
 {
   if (ec) {
-    _error(ec);
+    /* Read error */
+    error(ec);
+    return;
+  }
+  
+  if (length == 0) {
+    /* Socket closed */
+    stop();
     return;
   }
   
@@ -318,11 +493,13 @@ Session::readCallback(const std::uint8_t *data, std::size_t length,
     FrameGuard guard(_insideCallback);
     auto nrecvd = nghttp2_session_mem_recv(h2session.get(), data, length);
     if (nrecvd < 0) {
-      _error(make_nghttp2_error(static_cast<nghttp2_error>(nrecvd)));
+      error(make_nghttp2_error(static_cast<nghttp2_error>(nrecvd)));
     } else if (nrecvd != length) {
-      _error(make_nghttp2_error(NGHTTP2_ERR_PROTO));
+      error(make_nghttp2_error(NGHTTP2_ERR_PROTO));
     }
   }
+  
+  signalWrite();
 }
 
 nghttp2_session *

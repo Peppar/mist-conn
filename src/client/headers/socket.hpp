@@ -166,10 +166,10 @@ protected:
   void _write();
   
   /*
-   * Called when the socket is closed.
+   * Signal to the context event loop that we have things to do.
    */
-  void _close(boost::system::error_code ec);
-  
+  void signal();
+
 public:
 
   inline PRFileDesc *fileDesc() { return fd.get(); };
@@ -205,8 +205,8 @@ public:
   /*
    * Close the socket.
    */
-  void close();
-  
+  void close(boost::system::error_code ec = boost::system::error_code());
+
   /*
    * Returns true iff there is data to be written.
    */
@@ -216,6 +216,7 @@ public:
    * Returns true iff we are ready to listen for reads.
    */
   bool isReading() const;
+  
 };
 
 }

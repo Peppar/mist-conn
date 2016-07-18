@@ -39,8 +39,6 @@ protected:
   
   Response _response;
   
-  bool _stopped;
-  
 public:
 
   Stream(Session& session);
@@ -54,6 +52,10 @@ public:
   int onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
                std::size_t namelen, const std::uint8_t *value,
                std::size_t valuelen, std::uint8_t flags);
+
+  int onFrameSend(const nghttp2_frame *frame);
+
+  int onFrameNotSend(const nghttp2_frame *frame, int errorCode);
 
   int onFrameRecv(const nghttp2_frame *frame);
 

@@ -13,6 +13,7 @@ namespace mist
 namespace h2
 {
 
+class Session;
 class Response;
 class Request;
   
@@ -22,6 +23,7 @@ using header_map = std::map<std::string, header_value>;
 using data_callback
   = std::function<void(const std::uint8_t *data, std::size_t length)>;
 
+using session_callback = std::function<void(Session &session)>;
 using close_callback = std::function<void(const boost::system::error_code &ec)>;
 using error_callback = std::function<void(const boost::system::error_code &ec)>;
 using response_callback = std::function<void(Response&)>;
