@@ -28,85 +28,42 @@ class Stream;
 
 class Session
 {
-protected:
+private:
 
-  /* Underlying TLS socket */
-  Socket &sock;
-  
   /* nghttp2 session struct */
   c_unique_ptr<nghttp2_session> h2session;
   
-  /* Boolean to signify that we are already sending data on the socket */
-  bool _sending;
-
-  /* Boolean to signify if communication has stopped for this session */
-  bool _stopped;
-  
-  /* Boolean to signify that we are inside of a callback context and must
-   * not re-trigger a write */
-  bool _insideCallback;
-  
-  bool _isServer;
-  
-  /* streamId: Stream map for all the streams in the session */
+  /* Map of all streams in the session */
   using stream_map = std::map<std::int32_t, std::unique_ptr<Stream>>;
   stream_map _streams;
 
-  error_callback _onError;
-  
-  request_callback _onRequest;
+  /* Boolean signifying that we are already sending data on the socket */
+  bool _sending;
 
-public:
+  /* Boolean signifying that communication has stopped for this session */
+  bool _stopped;
+  
+  /* Boolean signifying that we are inside of a callback context and must
+   * not re-trigger a write */
+  bool _insideCallback;
+
+  error_callback _onError;
+
+protected:
 
   Session(Socket &sock, bool isServer);
   
-  void shutdown();
+  /* Underlying TLS socket */
+  Socket &sock;
   
-  void stop();
-  
-  bool isStopped() const;
-  
-  bool isServer() const;
-  
-  boost::optional<Request&>
-  submit(boost::system::error_code &ec,
-         const std::string &method,
-         const std::string &path,
-         const std::string &authority,
-         header_map headers,
-         generator_callback cb);
-  
-  /* Returns the raw nghttp2 struct */
-  nghttp2_session *nghttp2Session();
-  
-  /* Signal possible data to be written to the socket */
-  void signalWrite();
-  
-  void setOnError(error_callback cb);
-  
-  void setOnRequest(request_callback cb);
-  
-  /* Lookup a stream from its stream id */
-  boost::optional<Stream&> stream(std::int32_t streamId);
-  
-protected:
-
-  /* Create a new steam */
-  std::unique_ptr<Stream> createStream();
-
-  /* Close a stream */
-  void closeStream(Stream &stream);
-  
-  /* Insert a new stream created with createStream. The stream
-   * must have a stream id assigned. */
-  Stream &insertStream(std::unique_ptr<Stream> strm);
-
-  /* Create a new push stream with the specified promised id */  
-  void createPushStream(std::int32_t streamId);
-
   /* Called by the socket when data has been read */
   void readCallback(const std::uint8_t *data, std::size_t length,
                     boost::system::error_code ec);
+
+  virtual int onBeginHeaders(const nghttp2_frame *frame) = 0;
+
+  virtual int onStreamClose(std::int32_t stream_id,
+                            std::uint32_t error_code) = 0;
 
   /* Called when an error was detected when communicating */
   void error(boost::system::error_code ec);
@@ -117,6 +74,89 @@ protected:
   /* Returns true iff there are reads or writes pending */
   bool alive() const;
   
+  /* Signal possible data to be written to the socket */
+  void signalWrite();
+
+protected:
+
+  /* Lookup a stream from its stream id */
+  template<typename StreamT>
+  boost::optional<StreamT&> stream(std::int32_t streamId);
+  {
+    auto it = _streams.find(streamId);
+    if (it == _streams.end())
+      return boost::none;
+    return static_cast<StreamT &>(*it->second);
+  }
+  
+  /* Insert a new stream. The stream must have a stream id assigned. */
+  template<typename StreamT>
+  StreamT &insertStream(std::unique_ptr<StreamT> strm)
+  {
+    auto it = _streams.insert(std::make_pair(strm.streamId(),
+                                             std::move(strm)));
+    assert (!it.second);
+    return *it.first.second;
+  }
+
+public:
+
+  void shutdown();
+  
+  void stop();
+  
+  bool isStopped() const;
+
+  void setOnError(error_callback cb);
+
+  /* Returns the raw nghttp2 struct */
+  nghttp2_session *nghttp2Session();
+
+};
+
+class ClientSession : public Session
+{
+protected:
+
+  virtual int onBeginHeaders(const nghttp2_frame *frame) override;
+
+  virtual int onStreamClose(std::int32_t stream_id,
+                            std::uint32_t error_code) override;
+
+public:
+
+  ClientSession(Socket &sock);
+  
+  boost::optional<ClientRequest&>
+  submit(boost::system::error_code &ec,
+         // const std::string &method,
+         // const std::string &path,
+         // const std::string &scheme,
+         // const std::string &authority,
+         header_map headers,
+         generator_callback cb);
+
+};
+
+class ServerSession : public Session
+{
+private:
+
+  server_request_callback _onRequest;
+
+protected:
+
+  virtual int onBeginHeaders(const nghttp2_frame *frame) override;
+
+  virtual int onStreamClose(std::int32_t stream_id,
+                            std::uint32_t error_code) override;
+
+public:
+
+  ServerSession(Socket &sock);
+
+  void setOnRequest(request_callback cb);
+
 };
 
 }

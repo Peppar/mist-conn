@@ -26,6 +26,8 @@ class Stream
 {
 protected:
 
+  friend class Session;
+
   Session &_session;
   
   /* RFC7540 5.1.1
@@ -35,9 +37,19 @@ protected:
    */
   std::int32_t _streamId;
   
-  Request _request;
-  
-  Response _response;
+  virtual int onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
+                       std::size_t namelen, const std::uint8_t *value,
+                       std::size_t valuelen, std::uint8_t flags) = 0;
+
+  virtual int onFrameSend(const nghttp2_frame *frame) = 0;
+
+  virtual int onFrameNotSend(const nghttp2_frame *frame, int errorCode) = 0;
+
+  virtual int onFrameRecv(const nghttp2_frame *frame) = 0;
+
+  virtual int onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t len) = 0;
+
+  virtual int onStreamClose(std::uint32_t errorCode) = 0;
   
 public:
 
@@ -49,31 +61,74 @@ public:
 
   void setStreamId(std::int32_t streamId);
 
-  int onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
-               std::size_t namelen, const std::uint8_t *value,
-               std::size_t valuelen, std::uint8_t flags);
-
-  int onFrameSend(const nghttp2_frame *frame);
-
-  int onFrameNotSend(const nghttp2_frame *frame, int errorCode);
-
-  int onFrameRecv(const nghttp2_frame *frame);
-
-  int onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t len);
-
-  int onStreamClose(std::uint32_t errorCode);
-  
-  void cancel(std::uint32_t errorCode);
-  
-  void resume();
-
-  /* void writeTrailer(const header_map &headers, boost::system::error_code &ec); */
-
   Session &session();
-  
-  Request &request();
 
-  Response &response();
+};
+
+class ClientStream : public Stream
+{
+protected:
+
+  ClientRequest _request;
+  
+  ClientResponse _response;
+  
+  virtual int onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
+                       std::size_t namelen, const std::uint8_t *value,
+                       std::size_t valuelen, std::uint8_t flags) override;
+
+  virtual int onFrameSend(const nghttp2_frame *frame) override;
+
+  virtual int onFrameNotSend(const nghttp2_frame *frame, int errorCode)
+    override;
+
+  virtual int onFrameRecv(const nghttp2_frame *frame) override;
+
+  virtual int onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t len) override;
+
+  virtual int onStreamClose(std::uint32_t errorCode) override;
+  
+public:
+
+  ClientStream(Session& session);
+  
+  ClientRequest &request();
+
+  ClientResponse &response();
+  
+};
+
+class ServerStream : public Stream
+{
+protected:
+
+  ServerRequest _request;
+  
+  ServerResponse _response;
+  
+  virtual int onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
+                       std::size_t namelen, const std::uint8_t *value,
+                       std::size_t valuelen, std::uint8_t flags) override;
+
+  virtual int onFrameSend(const nghttp2_frame *frame) override;
+
+  virtual int onFrameNotSend(const nghttp2_frame *frame, int errorCode)
+    override;
+
+  virtual int onFrameRecv(const nghttp2_frame *frame) override;
+
+  virtual int onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t len) override;
+
+  virtual int onStreamClose(std::uint32_t errorCode) override;
+  
+public:
+
+  ServerStream(Session& session);
+  
+  ServerRequest &request();
+
+  ServerResponse &response();
+  
 };
 
 }

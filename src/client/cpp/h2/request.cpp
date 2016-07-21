@@ -12,7 +12,7 @@ namespace h2
 Request::Request(Stream &stream)
   : _stream(stream),
     _contentLength(0),
-    _statusCode(0)
+    _statusCode(0), 
     {}
 
 /*

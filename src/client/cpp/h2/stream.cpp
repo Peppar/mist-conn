@@ -12,27 +12,13 @@ namespace h2
 
 Stream::Stream(Session &session)
   : _session(session),
-    _streamId(-1),
-    _request(*this),
-    _response(*this)
+    _streamId(-1)
   {}
 
 Session &
 Stream::session()
 {
   return _session;
-}
-
-Request &
-Stream::request()
-{
-  return _request;
-}
-
-Response &
-Stream::response()
-{
-  return _response;
 }
 
 bool
@@ -55,87 +41,70 @@ Stream::setStreamId(std::int32_t streamId)
   _streamId = streamId;
 }
 
+// void
+// Stream::cancel(std::uint32_t errorCode)
+// {
+  // if (session().isStopped()) {
+    // /* The whole session is stopped */
+    // return;
+  // }
+
+  // nghttp2_submit_rst_stream(session().nghttp2Session(), NGHTTP2_FLAG_NONE, streamId(), errorCode);
+
+  // session().signalWrite();
+// }
+
+// void
+// Stream::resume()
+// {
+  // if (session().isStopped()) {
+    // /* The whole session is stopped */
+    // return;
+  // }
+  
+  // nghttp2_session_resume_data(session().nghttp2Session(), streamId());
+  
+  // session().signalWrite();
+// }
 
 /*
-namespace
-{
-nghttp2_nv make_nghttp2_nv(std::string name, std::string value, bool sensitive)
-{
-  return nghttp2_nv {
-    const_cast<std::uint8_t *>(
-      reinterpret_cast<const std::uint8_t*>(name.data())),
-    const_cast<std::uint8_t *>(
-      reinterpret_cast<const std::uint8_t*>(value.data())),
-    name.length(), value.length(),
-    sensitive ? NGHTTP2_NV_FLAG_NO_INDEX : NGHTTP2_NV_FLAG_NONE
-  };
-}
-}
+ * ClientStream
+ */
 
-void
-Stream::writeTrailer(const header_map &headers, boost::system::error_code &ec)
+ClientStream::ClientStream(Session &session)
+  : Stream(session),
+    _request(*this),
+    _response(*this)
+    {}
+
+ClientRequest &
+ClientStream::request()
 {
-  ec.clear();
-  
-  std::vector<nghttp2_nv> nvs;
-  nvs.reserve(headers.size());
-  for (auto &header : headers) {
-    nvs.push_back(make_nghttp2_nv(header.first, header.second.first, header.second.second));
-  }
-  auto rv = nghttp2_submit_trailer(session().nghttp2Session(), streamId(), nvs.data(),
-                                   nvs.size());
-                                   
-  if (rv != 0) {
-    ec = make_nghttp2_error(static_cast<nghttp2_error>(rv));
-    return;
-  }
- 
-  session().signalWrite();
-}
-*/
-
-void
-Stream::cancel(std::uint32_t errorCode)
-{
-  if (session().isStopped()) {
-    /* The whole session is stopped */
-    return;
-  }
-
-  nghttp2_submit_rst_stream(session().nghttp2Session(), NGHTTP2_FLAG_NONE, streamId(), errorCode);
-
-  session().signalWrite();
+  return _request;
 }
 
-void
-Stream::resume()
+ClientResponse &
+ClientStream::response()
 {
-  if (session().isStopped()) {
-    /* The whole session is stopped */
-    return;
-  }
-  
-  nghttp2_session_resume_data(session().nghttp2Session(), streamId());
-  
-  session().signalWrite();
+  return _response;
 }
 
 int
-Stream::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
-                 std::size_t namelen, const std::uint8_t *value,
-                 std::size_t valuelen, std::uint8_t flags)
+ClientStream::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
+                       std::size_t namelen, const std::uint8_t *value,
+                       std::size_t valuelen, std::uint8_t flags)
 {
   switch (frame->hd.type) {
   case NGHTTP2_HEADERS:
     return response().onHeader(frame, name, namelen, value, valuelen, flags);
   case NGHTTP2_PUSH_PROMISE:
-    return request().onPushHeader(frame, name, namelen, value, valuelen, flags);
+    return request().onHeader(frame, name, namelen, value, valuelen, flags);
   }
   return 0;
 }
 
 int
-Stream::onFrameRecv(const nghttp2_frame *frame)
+ClientStream::onFrameRecv(const nghttp2_frame *frame)
 {
   switch (frame->hd.type) {
   case NGHTTP2_DATA: {
@@ -183,19 +152,19 @@ Stream::onFrameRecv(const nghttp2_frame *frame)
 }
 
 int
-Stream::onFrameSend(const nghttp2_frame *frame)
+ClientStream::onFrameSend(const nghttp2_frame *frame)
 {
   return 0;
 }
 
 int
-Stream::onFrameNotSend(const nghttp2_frame *frame, int errorCode)
+ClientStream::onFrameNotSend(const nghttp2_frame *frame, int errorCode)
 {
   return 0;
 }
 
 int
-Stream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t length)
+ClientStream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t length)
 {
   response().onData(data, length);
 
@@ -203,7 +172,96 @@ Stream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_
 }
 
 int
-Stream::onStreamClose(std::uint32_t errorCode)
+ClientStream::onStreamClose(std::uint32_t errorCode)
+{
+  request().onClose(make_nghttp2_error(static_cast<nghttp2_error>(errorCode)));
+  
+  return 0;
+}
+
+/*
+ * ServerStream
+ */
+
+ServerStream::ServerStream(Session &session)
+  : Stream(session),
+    _request(*this),
+    _response(*this)
+    {}
+
+ServerRequest &
+ServerStream::request()
+{
+  return _request;
+}
+
+ServerResponse &
+ServerStream::response()
+{
+  return _response;
+}
+
+int
+ServerStream::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
+                       std::size_t namelen, const std::uint8_t *value,
+                       std::size_t valuelen, std::uint8_t flags)
+{
+  switch (frame->hd.type) {
+  case NGHTTP2_HEADERS:
+    if (frame->headers.cat != NGHTTP2_HCAT_REQUEST)
+      return 0;
+    
+    return request().onHeader(frame, name, namelen, value, valuelen, flags);
+  }
+  return 0;
+}
+
+int
+ServerStream::onFrameRecv(const nghttp2_frame *frame)
+{
+  switch (frame->hd.type) {
+  case NGHTTP2_DATA: {
+    if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)
+      /* No data */
+      request().onData(nullptr, 0);
+    break;
+  }
+  case NGHTTP2_HEADERS: {
+    if (frame->headers.cat != NGHTTP2_HCAT_REQUEST)
+      return 0;
+
+    session().onRequest(request());
+    
+    if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)
+      request().onData(nullptr, 0);
+    
+    break;
+  }
+  return 0;
+}
+
+int
+ServerStream::onFrameSend(const nghttp2_frame *frame)
+{
+  return 0;
+}
+
+int
+ServerStream::onFrameNotSend(const nghttp2_frame *frame, int errorCode)
+{
+  return 0;
+}
+
+int
+ServerStream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t length)
+{
+  request().onData(data, length);
+
+  return 0;
+}
+
+int
+ServerStream::onStreamClose(std::uint32_t errorCode)
 {
   request().onClose(make_nghttp2_error(static_cast<nghttp2_error>(errorCode)));
   
