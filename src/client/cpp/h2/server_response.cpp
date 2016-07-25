@@ -12,7 +12,7 @@ namespace mist
 namespace h2
 {
   
-ServerResponse::ServerResponse(ClientStream &stream)
+ServerResponse::ServerResponse(ServerStream &stream)
   : _stream(stream)
     {}
 
@@ -39,5 +39,29 @@ ServerResponse::onRead(std::uint8_t *data, std::size_t length, std::uint32_t *fl
   }
 }
 
+// void 
+// ServerResponse::writeHeaders(int statusCode, header_map headers)
+// {
+  // session().writeHeaders(statusCode, std::move(headers));
+// }
+
+// void 
+// ServerResponse::end(std::string data = "")
+// {
+  // session().end(data);
+// }
+
+// void 
+// ServerResponse::end(generator_callback cb)
+// {
+  // session().end(std::move(cb));
+// }
+
+// void 
+// writeTrailers(header_map trailers)
+// {
+  // session().writeTrailers(std::move(trailers));
+// }
+  
 }
 }

@@ -24,6 +24,9 @@ class Lane
 {
 private:
 
+  Lane(const Lane &) = delete;
+  Lane& operator=(const Lane &) = delete;
+
   std::int64_t _contentLength;
 
   int _statusCode;
@@ -38,11 +41,11 @@ private:
 
   header_map _headers;
 
-  close_callback _onClose;
-  
-  void insertHeader(std::string name, std::string value, bool sensitive);
+  void parseHeader(const std::string &name, const std::string &value);
 
 protected:
+
+  Lane();
 
   void onClose(boost::system::error_code ec);
 
@@ -54,12 +57,7 @@ protected:
 
 public:
 
-  Lane();
-
-  Lane(const Lane &) = delete;
-  Lane& operator=(const Lane &) = delete;
-
-  std::int64_t contentLength() const;
+  std::uint64_t contentLength() const;
 
   int statusCode() const;
 
@@ -75,8 +73,6 @@ public:
   // void setAuthority(const std::string &authority);
   const std::string &authority() const;
 
-  void setOnClose(close_callback cb);
-  
   const header_map &headers() const;
 
   std::vector<nghttp2_nv> makeHeaderNv() const;

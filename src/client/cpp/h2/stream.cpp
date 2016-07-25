@@ -41,6 +41,20 @@ Stream::setStreamId(std::int32_t streamId)
   _streamId = streamId;
 }
 
+void
+Stream::setOnClose(close_callback cb)
+{
+  _onClose = std::move(cb);
+}
+
+void
+Stream::close(boost::system::error_code ec)
+{
+  /* TODO: rst_stream? */
+  if (_onClose)
+    _onClose(ec);
+}
+
 // void
 // Stream::cancel(std::uint32_t errorCode)
 // {
@@ -137,16 +151,6 @@ ClientStream::onFrameRecv(const nghttp2_frame *frame)
     
     break;
   }
-  case NGHTTP2_PUSH_PROMISE: {
-    auto pushStream = session().stream(
-      frame->push_promise.promised_stream_id);
-    if (!pushStream)
-      return 0;
-    
-    request().onPush(pushStream->request());
-    
-    break;
-  }
   }
   return 0;
 }
@@ -174,9 +178,67 @@ ClientStream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std:
 int
 ClientStream::onStreamClose(std::uint32_t errorCode)
 {
-  request().onClose(make_nghttp2_error(static_cast<nghttp2_error>(errorCode)));
-  
+  close(make_nghttp2_error(static_cast<nghttp2_error>(errorCode)));
+
   return 0;
+}
+
+boost::system::error_code
+ClientStream::submit(std::string method,
+                     std::string path,
+                     std::string scheme,
+                     std::string authority,
+                     header_map headers,
+                     generator_callback cb)
+{
+  std::vector<nghttp2_nv> nvs;
+  
+  /* Make the header vector */
+  {
+    /* Special and mandatory headers */
+    headers.insert({":method", {std::move(method), false}});
+    headers.insert({":path", {std::move(path), false}});
+    headers.insert({":scheme", {std::move(scheme), false}});
+    headers.insert({":authority", {std::move(authority), false}});
+    request().setHeaders(std::move(headers));
+    nvs = request().makeHeaderNv();
+  }
+
+  /* Set the data provider, if applicable */
+  nghttp2_data_provider *prdptr = nullptr;
+  nghttp2_data_provider prd;
+  if (cb) {
+    request().setOnRead(std::move(cb));
+    prd.source.ptr = this;
+    prd.read_callback =
+      [](nghttp2_session */*session*/, std::int32_t stream_id, std::uint8_t *data,
+         std::size_t length, std::uint32_t *flags, nghttp2_data_source *source,
+         void *userp) -> ssize_t {
+        ClientStream &strm = *static_cast<ClientStream *>(source->ptr);
+        return strm.request().onRead(data, length, flags);
+      };
+    prdptr = &prd;
+  }
+  
+  /* Submit */
+  {
+    std::int32_t streamId = nghttp2_submit_request(session().nghttp2Session(),
+                                                   nullptr,
+                                                   nvs.data(), nvs.size(),
+                                                   prdptr, this);
+    if (streamId < 0) {
+      return make_nghttp2_error(static_cast<nghttp2_error>(streamId));
+    }
+
+    setStreamId(streamId);
+  }
+  return boost::system::error_code();
+}
+
+void
+ClientStream::onPush(ClientRequest &pushRequest)
+{
+  request().onPush(pushRequest);
 }
 
 /*
@@ -201,6 +263,68 @@ ServerStream::response()
   return _response;
 }
 
+boost::system::error_code
+ServerStream::submit(std::uint16_t statusCode,
+                     header_map headers,
+                     generator_callback cb)
+{
+  std::vector<nghttp2_nv> nvs;
+  
+  /* Make the header vector */
+  {
+    /* Special and mandatory headers */
+    headers.insert({":status", {std::to_string(statusCode), false}});
+
+    response().setHeaders(std::move(headers));
+    nvs = response().makeHeaderNv();
+  }
+
+  /* Set the data provider, if applicable */
+  nghttp2_data_provider *prdptr = nullptr;
+  nghttp2_data_provider prd;
+  if (cb) {
+    response().setOnRead(std::move(cb));
+    prd.source.ptr = this;
+    prd.read_callback =
+      [](nghttp2_session */*session*/, std::int32_t stream_id, std::uint8_t *data,
+         std::size_t length, std::uint32_t *flags, nghttp2_data_source *source,
+         void *userp) -> ssize_t {
+        ServerStream &strm = *static_cast<ServerStream *>(source->ptr);
+        return strm.response().onRead(data, length, flags);
+      };
+    prdptr = &prd;
+  }
+  
+  /* Submit */
+  {
+    auto rv = nghttp2_submit_response(session().nghttp2Session(), streamId(),
+                                      nvs.data(), nvs.size(), prdptr);
+    if (rv) {
+      return make_nghttp2_error(static_cast<nghttp2_error>(rv));
+    }
+  }
+  
+  return boost::system::error_code();
+}
+
+// void 
+// ServerStream::end(std::string data = "")
+// {
+  // session().end(data);
+// }
+
+// void 
+// ServerStream::end(generator_callback cb)
+// {
+  // session().end(std::move(cb));
+// }
+
+// void 
+// ServerStream(header_map trailers)
+// {
+  // session().writeTrailers(std::move(trailers));
+// }
+  
 int
 ServerStream::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
                        std::size_t namelen, const std::uint8_t *value,
@@ -230,12 +354,11 @@ ServerStream::onFrameRecv(const nghttp2_frame *frame)
     if (frame->headers.cat != NGHTTP2_HCAT_REQUEST)
       return 0;
 
-    session().onRequest(request());
-    
     if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)
       request().onData(nullptr, 0);
     
     break;
+  }
   }
   return 0;
 }
@@ -253,7 +376,8 @@ ServerStream::onFrameNotSend(const nghttp2_frame *frame, int errorCode)
 }
 
 int
-ServerStream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t length)
+ServerStream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data,
+                              std::size_t length)
 {
   request().onData(data, length);
 
@@ -263,8 +387,8 @@ ServerStream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std:
 int
 ServerStream::onStreamClose(std::uint32_t errorCode)
 {
-  request().onClose(make_nghttp2_error(static_cast<nghttp2_error>(errorCode)));
-  
+  close(make_nghttp2_error(static_cast<nghttp2_error>(errorCode)));
+
   return 0;
 }
 

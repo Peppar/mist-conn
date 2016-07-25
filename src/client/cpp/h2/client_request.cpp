@@ -17,7 +17,7 @@ ClientRequest::ClientRequest(ClientStream &stream)
     {}
 
 ClientStream &
-ClientResponse::stream()
+ClientRequest::stream()
 {
   return _stream;
 }
@@ -29,7 +29,7 @@ ClientRequest::setOnResponse(client_response_callback cb)
 }
 
 void
-ClientRequest::onResponse(Response &response)
+ClientRequest::onResponse(ClientResponse &response)
 {
   if (_onResponse)
     _onResponse(response);
@@ -42,10 +42,10 @@ ClientRequest::setOnPush(client_request_callback cb)
 }
 
 void
-ClientRequest::onPush(ClientRequest &request)
+ClientRequest::onPush(ClientRequest &pushRequest)
 {
   if (_onPush)
-    _onPush(request);
+    _onPush(pushRequest);
 }
 
 void 

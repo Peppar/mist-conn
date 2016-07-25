@@ -84,11 +84,13 @@ public:
 
   using connection_callback = std::function<void(Socket&)>;
 
-protected:
+private:
 
   friend class Socket;
 
   const char *nickname;
+  
+  c_unique_ptr<PRFileDesc> signalEvent;
 
   std::list<RdvSocket> rdvSocks;
   std::list<Socket> sslSocks;
@@ -134,6 +136,7 @@ public:
 
   Socket &openClientSocket();
 
+  void signal();
 };
 
 }

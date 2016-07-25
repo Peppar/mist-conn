@@ -20,6 +20,27 @@ namespace mist
 namespace h2
 {
 
+namespace
+{
+std::string frameName(std::uint8_t type)
+{
+  switch (type) {
+  case NGHTTP2_DATA: return "NGHTTP2_DATA";
+  case NGHTTP2_HEADERS: return "NGHTTP2_HEADERS";
+  case NGHTTP2_PRIORITY: return "NGHTTP2_PRIORITY";
+  case NGHTTP2_RST_STREAM: return "NGHTTP2_RST_STREAM";
+  case NGHTTP2_SETTINGS: return "NGHTTP2_SETTINGS";
+  case NGHTTP2_PUSH_PROMISE: return "NGHTTP2_PUSH_PROMISE";
+  case NGHTTP2_PING: return "NGHTTP2_PING";
+  case NGHTTP2_GOAWAY: return "NGHTTP2_GOAWAY";
+  case NGHTTP2_WINDOW_UPDATE: return "NGHTTP2_WINDOW_UPDATE";
+  case NGHTTP2_CONTINUATION: return "NGHTTP2_CONTINUATION";
+  case NGHTTP2_ALTSVC: return "NGHTTP2_ALTSVC";
+  default: return "Unknown frame type";
+  }
+}
+}
+
 /*
  * Session
  */
@@ -39,33 +60,24 @@ Session::Session(Socket &sock, bool isServer)
     cbs = to_unique(cbsPtr);
   }
   
+  /* DEBUG: Set on error callback */
+  nghttp2_session_callbacks_set_error_callback(cbs.get(),
+    [](nghttp2_session */*session*/, const char *message, std::size_t length,
+       void *user_data) -> int
+  {
+    std::cerr << "nghttp2 signalled error: "
+      << std::string(message, length) << std::endl;
+    return 0;
+  });
+  
   /* Set on begin headers callback */
   nghttp2_session_callbacks_set_on_begin_headers_callback(cbs.get(),
     [](nghttp2_session */*session*/, const nghttp2_frame *frame,
        void *user_data) -> int
   {
-    /* Stream may not yet exist; let the session handle this */
-    static_cast<Session *>(user_data)->onBeginHeaders(frame);
+    return static_cast<Session *>(user_data)->onBeginHeaders(frame);
   });
 
-  /* Set on stream close callback */
-  nghttp2_session_callbacks_set_on_stream_close_callback(cbs.get(),
-    [](nghttp2_session */*session*/, std::int32_t stream_id,
-       std::uint32_t error_code, void *user_data) -> int
-  {
-    static_cast<Session *>(user_data)->onStreamClose(stream_id, error_code);
-  });
-  
-  /* Set on error callback */
-  nghttp2_session_callbacks_set_error_callback(cbs.get(),
-    [](nghttp2_session */*session*/, const char *message, std::size_t length,
-       void *user_data) -> int
-  {
-    Session &sess = *static_cast<Session *>(user_data);
-    std::cerr << "nghttp signalled error: " << std::string(message, length) << std::endl;
-    return 0;
-  });
-  
   /* Set on header callback */
   nghttp2_session_callbacks_set_on_header_callback(cbs.get(),
     [](nghttp2_session */*session*/, const nghttp2_frame *frame,
@@ -73,11 +85,8 @@ Session::Session(Socket &sock, bool isServer)
        const std::uint8_t *value, std::size_t valuelen, std::uint8_t flags,
        void *user_data) -> int
   {
-    Session &session = *static_cast<Session *>(user_data);
-    auto stream = session.stream<ClientStream>(frame->hd.stream_id);
-    if (!stream)
-      return 0;
-    return stream->onFrameSend(frame, name, namelen, value, valuelen, flags);
+    return static_cast<Session *>(user_data)->onHeader(frame, name, namelen,
+                                                       value, valuelen, flags);
   });
   
   /* Set on stream frame send callback */
@@ -85,23 +94,15 @@ Session::Session(Socket &sock, bool isServer)
     [](nghttp2_session */*session*/, const nghttp2_frame *frame,
        void *user_data) -> int
   {
-    Session &session = *static_cast<Session *>(user_data);
-    auto stream = session.stream<ClientStream>(frame->hd.stream_id);
-    if (!stream)
-      return 0;
-    return stream->onFrameSend(frame);
+    return static_cast<Session *>(user_data)->onFrameSend(frame);
   });
   
   /* Set on frame not send callback */
   nghttp2_session_callbacks_set_on_frame_not_send_callback(cbs.get(),
     [](nghttp2_session */*session*/, const nghttp2_frame *frame,
-       int errorCode, void *user_data) -> int
+       int error_code, void *user_data) -> int
   {
-    Session &session = *static_cast<Session *>(user_data);
-    auto stream = session.stream<Stream>(frame->hd.stream_id);
-    if (!stream)
-      return 0;
-    return stream->onFrameNotSend(frame, errorCode);
+    return static_cast<Session *>(user_data)->onFrameNotSend(frame, error_code);
   });
   
   /* Set on frame receive callback */
@@ -109,11 +110,7 @@ Session::Session(Socket &sock, bool isServer)
     [](nghttp2_session */*session*/, const nghttp2_frame *frame,
        void *user_data) -> int
   {
-    Session &session = *static_cast<Session *>(user_data);
-    auto stream = session.stream<ClientStream>(frame->hd.stream_id);
-    if (!stream)
-      return 0;
-    return stream->onFrameRecv(frame, errorCode);
+    return static_cast<Session *>(user_data)->onFrameRecv(frame);
   });
   
   /* Set on data chunk receive callback */
@@ -122,13 +119,19 @@ Session::Session(Socket &sock, bool isServer)
        std::int32_t stream_id, const std::uint8_t *data, std::size_t len,
        void *user_data) -> int
   {
-    Session &session = *static_cast<Session *>(user_data);
-    auto stream = session.stream<ClientStream>(stream_id);
-    if (!stream)
-      return 0;
-    return stream->onDataChunkRecv(data, len);
+    return static_cast<Session *>(user_data)->onDataChunkRecv(flags, stream_id,
+                                                              data, len);
   });
 
+  /* Set on stream close callback */
+  nghttp2_session_callbacks_set_on_stream_close_callback(cbs.get(),
+    [](nghttp2_session */*session*/, std::int32_t stream_id,
+       std::uint32_t error_code, void *user_data) -> int
+  {
+    return static_cast<Session *>(user_data)->onStreamClose(stream_id,
+                                                            error_code);
+  });
+  
   /* Create the nghttp2_session and assign it to h2session */
   {
     nghttp2_session *sessPtr = nullptr;
@@ -159,15 +162,15 @@ Session::Session(Socket &sock, bool isServer)
         "Unable to send HTTP/2 settings"));
     }
   }
-  
-  /* Bind the socket read callback */
-  {
-    using namespace std::placeholders;
-    sock.read(std::bind(&Session::readCallback, this, _1, _2, _3));
-  }
-  
-  /* Write the first data */
-  signalWrite();
+}
+
+namespace
+{
+struct FrameGuard {
+  FrameGuard(bool &flag) : _flag(flag) { assert (!_flag); _flag = true; }
+  ~FrameGuard() { assert (_flag); _flag = false; }
+  bool &_flag;
+};
 }
 
 /*
@@ -199,7 +202,22 @@ Session::readCallback(const std::uint8_t *data, std::size_t length,
     }
   }
   
-  signalWrite();
+  /* nghttp2 might have decided that it has things to send */
+  write();
+}
+
+/* Start reading from the socket and write the first piece of data */
+void
+Session::start()
+{
+  /* Bind the socket read callback */
+  {
+    using namespace std::placeholders;
+    sock.read(std::bind(&Session::readCallback, this, _1, _2, _3));
+  }
+  
+  /* Write the first data */
+  write();
 }
 
 nghttp2_session *
@@ -253,31 +271,15 @@ Session::shutdown()
     return;
 
   nghttp2_session_terminate_session(h2session.get(), NGHTTP2_NO_ERROR);
-  signalWrite();
-}
-
-namespace
-{
-
-struct FrameGuard {
-  FrameGuard(bool &flag) : _flag(flag) { assert (!_flag); _flag = true; }
-  ~FrameGuard() { assert (_flag); _flag = false; }
-  bool &_flag;
-};
-
-}
-
-void
-Session::signalWrite()
-{
-  if (_insideCallback)
-    return;
   write();
 }
 
 void
 Session::write()
 {
+  if (_insideCallback)
+    return;
+  
   if (_sending)
     /* There is already a send in progress */
     return;
@@ -323,56 +325,29 @@ Session::write()
 
 ClientSession::ClientSession(Socket &sock)
   : Session(sock, false)
-    {}
+{
+  start();
+}
 
 boost::optional<ClientRequest&>
 ClientSession::submit(boost::system::error_code &ec,
-                      // const std::string &method,
-                      // const std::string &path,
-                      // const std::string &scheme,
-                      // const std::string &authority,
+                      std::string method,
+                      std::string path,
+                      std::string scheme,
+                      std::string authority,
                       header_map headers,
                       generator_callback cb)
 {
-  ec.clear();
   auto strm = std::make_unique<ClientStream>(*this);
-  ClientRequest &req = strm->request();
-  
-  // req.setMethod(method);
-  // req.setPath(path);
-  // req.setScheme(scheme);
-  // req.setAuthority(authority);
-  req.setHeaders(std::move(headers));
-  auto nvs = req.makeHeaderNv();
-
-  nghttp2_data_provider *prdptr = nullptr;
-  nghttp2_data_provider prd;
-
-  if (cb) {
-    req.setOnRead(std::move(cb));
-    prd.source.ptr = strm.get();
-    prd.read_callback =
-      [](nghttp2_session */*session*/, std::int32_t stream_id, std::uint8_t *data,
-         std::size_t length, std::uint32_t *flags, nghttp2_data_source *source,
-         void *userp) -> ssize_t {
-        Stream &strm = *static_cast<Stream *>(source->ptr);
-        return strm.request().onRead(data, length, flags);
-      };
-    prdptr = &prd;
-  }
-  
-  std::int32_t streamId = nghttp2_submit_request(h2session.get(), nullptr,
-                                                 nvs.data(), nvs.size(),
-                                                 prdptr, strm.get());
-  if (streamId < 0) {
-    ec = make_nghttp2_error(static_cast<nghttp2_error>(streamId));
+  ec = strm->submit(method, path, scheme, authority, std::move(headers),
+                    std::move(cb));
+  if (ec) {
     return boost::none;
+  } else {
+    ClientRequest &request = insertStream(std::move(strm)).request();
+    write();
+    return request;
   }
-
-  signalWrite();
-
-  strm->setStreamId(streamId);
-  return insertStream(std::move(strm)).request();
 }
 
 int
@@ -381,17 +356,76 @@ ClientSession::onBeginHeaders(const nghttp2_frame *frame)
   if (frame->hd.type == NGHTTP2_PUSH_PROMISE) {
     /* Server created a push stream */
     auto strm = std::make_unique<ClientStream>(*this);
-    strm->setStreamId(streamId);
+    strm->setStreamId(frame->push_promise.promised_stream_id);
     insertStream(std::move(strm));
   }
   return 0;
 }
 
 int
+ClientSession::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
+                       std::size_t namelen, const std::uint8_t *value,
+                       std::size_t valuelen, std::uint8_t flags)
+{
+  auto stream = findStream<ClientStream>(frame->hd.stream_id);
+  if (!stream)
+    return 0;
+  return stream->onHeader(frame, name, namelen, value, valuelen, flags);
+}
+
+int
+ClientSession::onFrameSend(const nghttp2_frame *frame)
+{
+  std::cerr << "Client SEND " << frameName(frame->hd.type) << std::endl;
+  auto stream = findStream<ClientStream>(frame->hd.stream_id);
+  if (!stream)
+    return 0;
+  return stream->onFrameSend(frame);
+}
+
+int
+ClientSession::onFrameNotSend(const nghttp2_frame *frame, int errorCode)
+{
+  auto stream = findStream<ClientStream>(frame->hd.stream_id);
+  if (!stream)
+    return 0;
+  return stream->onFrameNotSend(frame, errorCode);
+}
+
+int
+ClientSession::onFrameRecv(const nghttp2_frame *frame)
+{
+  std::cerr << "Client RECV " << frameName(frame->hd.type) << std::endl;
+  auto stream = findStream<ClientStream>(frame->hd.stream_id);
+  if (!stream)
+    return 0;
+  if (frame->hd.type == NGHTTP2_PUSH_PROMISE) {
+    auto pushStream = findStream<ClientStream>(
+      frame->push_promise.promised_stream_id);
+    if (pushStream) {
+      stream->onPush(pushStream->request());
+    }
+  }
+  return stream->onFrameRecv(frame);
+}
+
+int
+ClientSession::onDataChunkRecv(std::uint8_t flags, std::int32_t stream_id,
+                               const std::uint8_t *data, std::size_t length)
+{
+  auto stream = findStream<ClientStream>(stream_id);
+  if (!stream)
+    return 0;
+  return stream->onDataChunkRecv(flags, data, length);
+}
+
+int
 ClientSession::onStreamClose(std::int32_t stream_id, std::uint32_t error_code)
 {
-  auto stream = stream<ClientStream>(frame->hd.stream_id)
-  return stream.onStreamClose(error_code);
+  auto stream = findStream<ClientStream>(stream_id);
+  if (!stream)
+    return 0;
+  return stream->onStreamClose(error_code);
 }
 
 /*
@@ -399,10 +433,12 @@ ClientSession::onStreamClose(std::int32_t stream_id, std::uint32_t error_code)
  */
 ServerSession::ServerSession(Socket &sock)
   : Session(sock, true)
-    {}
+{
+  start();
+}
 
 void
-ServerSession::setOnRequest(request_callback cb)
+ServerSession::setOnRequest(server_request_callback cb)
 {
   _onRequest = std::move(cb);
 }
@@ -421,10 +457,67 @@ ServerSession::onBeginHeaders(const nghttp2_frame *frame)
 }
 
 int
+ServerSession::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
+                       std::size_t namelen, const std::uint8_t *value,
+                       std::size_t valuelen, std::uint8_t flags)
+{
+  auto stream = findStream<ServerStream>(frame->hd.stream_id);
+  if (!stream)
+    return 0;
+  return stream->onHeader(frame, name, namelen, value, valuelen, flags);
+}
+
+int
+ServerSession::onFrameSend(const nghttp2_frame *frame)
+{
+  std::cerr << "Server SEND " << frameName(frame->hd.type) << std::endl;
+  auto stream = findStream<ServerStream>(frame->hd.stream_id);
+  if (!stream)
+    return 0;
+  return stream->onFrameSend(frame);
+}
+
+int
+ServerSession::onFrameNotSend(const nghttp2_frame *frame, int error_code)
+{
+  auto stream = findStream<ServerStream>(frame->hd.stream_id);
+  if (!stream)
+    return 0;
+  return stream->onFrameNotSend(frame, error_code);
+}
+
+int
+ServerSession::onFrameRecv(const nghttp2_frame *frame)
+{
+  std::cerr << "Server RECV " << frameName(frame->hd.type) << std::endl;
+  auto stream = findStream<ServerStream>(frame->hd.stream_id);
+  if (!stream)
+    return 0;
+  if (frame->hd.type == NGHTTP2_HEADERS
+      && frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
+    if (_onRequest)
+      _onRequest(stream->request());
+  }
+  return stream->onFrameRecv(frame);
+}
+
+int
+ServerSession::onDataChunkRecv(std::uint8_t flags, std::int32_t stream_id,
+                               const std::uint8_t *data, std::size_t length)
+{
+  auto stream = findStream<ServerStream>(stream_id);
+  if (!stream)
+    return 0;
+  return stream->onDataChunkRecv(flags, data, length);
+}
+
+int
 ServerSession::onStreamClose(std::int32_t stream_id, std::uint32_t error_code)
 {
-  auto stream = stream<ClientStream>(frame->hd.stream_id)
-  return stream.onStreamClose(error_code);
+  auto stream = findStream<ServerStream>(stream_id);
+  if (!stream)
+    return 0;
+  return stream->onStreamClose(error_code);
 }
 
 }

@@ -1,7 +1,6 @@
 #include <type_traits>
 
-#include "h2/request.hpp"
-#include "h2/stream.hpp"
+#include "h2/lane.hpp"
 #include "h2/util.hpp"
 
 namespace mist
@@ -107,26 +106,13 @@ Lane::setHeaders(header_map headers)
   
   _headers = std::move(headers);
   for (auto &h : _headers)
-    parseHeader(header.first, header.second.first, header.second.second);
+    parseHeader(h.first, h.second.first);
 }
 
 const header_map &
 Lane::headers() const
 {
   return _headers;
-}
-
-void 
-Lane::setOnClose(close_callback cb)
-{
-  _onClose = std::move(cb);
-}
-
-void
-Lane::onClose(boost::system::error_code ec)
-{
-  if (_onClose)
-    _onClose(ec);
 }
 
 void

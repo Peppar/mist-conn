@@ -11,9 +11,11 @@
 
 #include "memory/nghttp2.hpp"
 
-#include "h2/request.hpp"
-#include "h2/response.hpp"
 #include "h2/types.hpp"
+#include "h2/client_request.hpp"
+#include "h2/client_response.hpp"
+#include "h2/server_request.hpp"
+#include "h2/server_response.hpp"
 
 namespace mist
 {
@@ -24,6 +26,10 @@ class Session;
 
 class Stream
 {
+private:
+
+  close_callback _onClose;
+
 protected:
 
   friend class Session;
@@ -63,11 +69,17 @@ public:
 
   Session &session();
 
+  void setOnClose(close_callback cb);
+  
+  void close(boost::system::error_code ec);
+
 };
 
 class ClientStream : public Stream
 {
 protected:
+
+  friend class ClientSession;
 
   ClientRequest _request;
   
@@ -88,6 +100,8 @@ protected:
 
   virtual int onStreamClose(std::uint32_t errorCode) override;
   
+  void onPush(ClientRequest &request);
+
 public:
 
   ClientStream(Session& session);
@@ -96,11 +110,20 @@ public:
 
   ClientResponse &response();
   
+  boost::system::error_code submit(std::string method,
+                                   std::string path,
+                                   std::string scheme,
+                                   std::string authority,
+                                   header_map headers,
+                                   generator_callback cb);
+  
 };
 
 class ServerStream : public Stream
 {
 protected:
+
+  friend class ServerSession;
 
   ServerRequest _request;
   
@@ -120,7 +143,7 @@ protected:
   virtual int onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t len) override;
 
   virtual int onStreamClose(std::uint32_t errorCode) override;
-  
+
 public:
 
   ServerStream(Session& session);
@@ -129,6 +152,10 @@ public:
 
   ServerResponse &response();
   
+  boost::system::error_code submit(std::uint16_t statusCode,
+                                   header_map headers,
+                                   generator_callback cb);
+
 };
 
 }

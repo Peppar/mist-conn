@@ -57,8 +57,10 @@
 
 #include "h2/session.hpp"
 #include "h2/stream.hpp"
-#include "h2/request.hpp"
-#include "h2/response.hpp"
+#include "h2/client_request.hpp"
+#include "h2/client_response.hpp"
+#include "h2/server_request.hpp"
+#include "h2/server_response.hpp"
 
 namespace
 {

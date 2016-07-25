@@ -466,12 +466,25 @@ void SSLContext::accept(RdvSocket &rdvSock)
 }
 
 /*
+ * Forces the eventLoop to wake up.
+ */
+void SSLContext::signal()
+{
+  if (PR_SetPollableEvent(signalEvent.get()) != PR_SUCCESS)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to signal write"));
+}
+
+/*
  * Main event loop.
  */
 void SSLContext::eventLoop()
 {
   while (1) {
     std::vector<PRPollDesc> pds;
+    
+    /* Add the write event */
+    pds.push_back(PRPollDesc{signalEvent.get(), PR_POLL_READ});
     
     /* Add the rendez-vous sockets */
     for (auto i = rdvSocks.begin(); i != rdvSocks.end(); ++i) {
@@ -525,6 +538,14 @@ void SSLContext::eventLoop()
     }
 
     auto j = pds.begin();
+    
+    if (j->out_flags & PR_POLL_READ) {
+      std::cerr << "signalEvent!" << std::endl;
+      if (PR_WaitForPollableEvent(signalEvent.get()) != PR_SUCCESS)
+        BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+          "Unable to wait for signalEvent"));
+    }
+    ++j;
     
     for (auto i = rdvSocks.begin(); i != rdvSocks.end(); ++i, ++j) {
       /* Handle the rendez-vous sockets */
@@ -581,9 +602,13 @@ void SSLContext::eventLoop()
 }
 
 SSLContext::SSLContext(const char *nickname)
-  : nickname(nickname)
+  : nickname(nickname), signalEvent(to_unique<PRFileDesc>())
 {
   nss_init("db");
+  
+  signalEvent = to_unique(PR_NewPollableEvent(), [](PRFileDesc *p) {
+    PR_DestroyPollableEvent(p);
+  });
 }
 
 void SSLContext::serve(uint16_t servPort, connection_callback cb)

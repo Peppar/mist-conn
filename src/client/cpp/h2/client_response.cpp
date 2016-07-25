@@ -13,7 +13,7 @@ namespace h2
 {
   
 ClientResponse::ClientResponse(ClientStream &stream)
-  : Lane(stream)
+  : _stream(stream)
     {}
 
 ClientStream &

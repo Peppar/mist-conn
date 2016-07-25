@@ -30,7 +30,7 @@ protected:
   
   void onResponse(ClientResponse &response);
 
-  void onPush(ClientRequest &request);
+  void onPush(ClientRequest &pushRequest);
 
   generator_callback::result_type onRead(std::uint8_t *data, std::size_t length,
                                          std::uint32_t *flags);

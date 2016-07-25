@@ -155,29 +155,6 @@ void Socket::connect(PRNetAddr *addr, connect_callback cb)
 }
 
 /*
- * Begin TLS communication.
- */ 
-void Socket::handshake(handshake_callback cb)
-{
-  assert (state == State::Connected);
-  assert (r.state == Read::State::Off);
-  assert (w.state == Write::State::Off);
-
-  state = State::Handshaking;
-  h.cb = std::move(cb);
-
-  if (!server) {
-    /* If this socket was created by the client, the socket has
-       not yet been wrapped as an SSL socket */
-    ctx.initializeSecurity(fd);
-  }
-  ctx.initializeTLS(*this);
-  
-  _handshake();
-  /* TODO: Replace by signal(); */
-}
-
-/*
  * Called when the socket is connecting and has signaled that it
  * is ready to continue.
  */
@@ -199,6 +176,28 @@ void Socket::_connectContinue(PRInt16 out_flags)
       c.cb = nullptr;
     }
   }
+}
+
+/*
+ * Begin TLS communication.
+ */ 
+void Socket::handshake(handshake_callback cb)
+{
+  assert (state == State::Connected);
+  assert (r.state == Read::State::Off);
+  assert (w.state == Write::State::Off);
+
+  state = State::Handshaking;
+  h.cb = std::move(cb);
+
+  if (!server) {
+    /* If this socket was created by the client, the socket has
+       not yet been wrapped as an SSL socket */
+    ctx.initializeSecurity(fd);
+  }
+  ctx.initializeTLS(*this);
+  
+  _handshake();
 }
 
 /*
@@ -243,7 +242,6 @@ Socket::readOnce(std::size_t length, read_callback cb)
   r.nread = 0;
   r.cb = std::move(cb);
   
-  /* TODO: Signal that this socket is ready for read */
   signal();
 }
 
@@ -260,7 +258,6 @@ Socket::read(read_callback cb)
   r.nread = 0;
   r.cb = std::move(cb);
 
-  /* TODO: Signal that this socket is ready for read */
   signal();
 }
 
@@ -334,7 +331,6 @@ Socket::write(const uint8_t *data, std::size_t length,
   w.cb = std::move(cb);
   
   _write();
-  /* TODO: Replace by signal(); */
 }
 
 /*
@@ -429,8 +425,7 @@ Socket::isReading() const
 void
 Socket::signal()
 {
-  /* We'll do this when we do threads, then we have other things to worry about... */
-  /* TODO: Wake up event loop */
+  ctx.signal();
 }
 
 }

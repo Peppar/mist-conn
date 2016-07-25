@@ -20,8 +20,10 @@
 
 #include "h2/session.hpp"
 #include "h2/stream.hpp"
-#include "h2/request.hpp"
-#include "h2/response.hpp"
+#include "h2/client_request.hpp"
+#include "h2/client_response.hpp"
+#include "h2/server_request.hpp"
+#include "h2/server_response.hpp"
 
 namespace mist
 {
@@ -82,18 +84,23 @@ protected:
 
   SSLContext sslCtx;
   
-  std::list<Session> sessions;
+  std::list<std::unique_ptr<Session>> sessions;
 
   uint16_t connectTorPort;
   
-  session_callback _sessionCb;
+  server_session_callback _sessionCb;
 
 protected:
 
-  Session &createSession(Socket &socket, bool isServer)
+  template<typename SessionT, typename... Args>
+  SessionT &makeInsertSession(Args&&... args)
   {
-    sessions.emplace_back(socket, isServer);
-    return *(--sessions.end());
+    std::unique_ptr<SessionT> session
+      = std::make_unique<SessionT>(std::forward<Args>(args)...);
+    
+    SessionT &sessionRef = *session;
+    sessions.emplace_back(std::move(session));
+    return sessionRef;
   }
 
   void directConnection(Socket &sock)
@@ -112,7 +119,7 @@ protected:
       auto sessionId = to_unique(SSL_GetSessionID(sock.fileDesc()));
       std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
       
-      onSession(createSession(sock, true));
+      onSession(makeInsertSession<ServerSession>(sock));
     });
   }
   
@@ -132,7 +139,7 @@ protected:
       auto sessionId = to_unique(SSL_GetSessionID(sock.fileDesc()));
       std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
 
-      onSession(createSession(sock, true));
+      onSession(makeInsertSession<ServerSession>(sock));
     });
   }
  
@@ -153,7 +160,7 @@ public:
       std::bind(&ConnectContext::torConnection, this, _1));
   }
   
-  void connect(PRNetAddr *addr, session_callback cb)
+  void connect(PRNetAddr *addr, client_session_callback cb)
   {
     Socket &sock = sslCtx.openClientSocket();
     sock.connect(addr,
@@ -171,19 +178,19 @@ public:
           } else {
             std::cerr << "Handshake successful!" << std::endl;
             
-            cb(createSession(sock, false));
+            cb(makeInsertSession<ClientSession>(sock));
           }
         });
       }
     });
   }
   
-  void setOnSession(session_callback sessionCb)
+  void setOnSession(server_session_callback sessionCb)
   {
     _sessionCb = std::move(sessionCb);
   }
   
-  void onSession(Session &session)
+  void onSession(ServerSession &session)
   {
     if (_sessionCb)
       _sessionCb(session);
@@ -196,6 +203,32 @@ public:
 
 };
 
+}
+}
+
+
+
+namespace
+{
+mist::h2::generator_callback
+make_generator(std::string body)
+{
+  std::size_t sent = 0;
+  
+  return [body, sent](std::uint8_t *data, std::size_t length,
+                      std::uint32_t *flags) mutable -> ssize_t
+  {
+    std::size_t remaining = body.size() - sent;
+    if (remaining == 0) {
+      *flags |= NGHTTP2_DATA_FLAG_EOF;
+      return 0;
+    } else {
+      std::size_t nsend = std::min(remaining, length);
+      std::copy(body.data() + sent, body.data() + sent + nsend, data);
+      sent += nsend;
+      return nsend;
+    }
+  };
 }
 }
 
@@ -213,12 +246,27 @@ main(int argc, char **argv)
     mist::h2::ConnectContext ctx(nickname, 9160);
     ctx.serve(port, isServer ? 9158 : 9159);
     ctx.setOnSession(
-      [=](mist::h2::Session &session)
+      [=](mist::h2::ServerSession &session)
     {
+      std::cerr << "Server onSession" << std::endl;
       session.setOnRequest(
-        [&session, =](mist::h2::Request &request)
+        [=, &session](mist::h2::ServerRequest &request)
       {
+        request.stream().setOnClose(
+          [](boost::system::error_code ec)
+        {
+          std::cerr << "Server stream closed! " << ec.message() << std::endl;
+        });
+        std::cerr << "New request!" << std::endl;
         
+        mist::h2::header_map headers
+        {
+          {"accept", {"*/*", false}},
+          {"accept-encoding", {"gzip, deflate", false}},
+          {"user-agent", {"nghttp2/" NGHTTP2_VERSION, false}},
+        };
+        request.stream().submit(404, std::move(headers),
+          make_generator("Hej!!"));
       });
     });
     /*
@@ -263,7 +311,7 @@ main(int argc, char **argv)
       //mist::Socket &sock = sslCtx.openClientSocket();
       std::cerr << "Trying to connect..." << std::endl;
       ctx.connect(&addr,
-        [&ctx](mist::h2::Session &session)
+        [&ctx](mist::h2::ClientSession &session)
       {
         session.setOnError(
           [&session](boost::system::error_code ec)
@@ -278,19 +326,27 @@ main(int argc, char **argv)
           {"accept-encoding", {"gzip, deflate", false}},
           {"user-agent", {"nghttp2/" NGHTTP2_VERSION, false}},
         };
-        auto req = session.submit(ec, "GET", "/", "", headers, nullptr);
+        auto req = session.submit(ec, "GET", "/", "https", "www.hej.os",
+                                  headers, nullptr);
         if (ec)
           std::cerr << ec.message() << std::endl;
         if (!req) {
           std::cerr << "Could not submit" << std::endl;
           return;
         }
+        std::cerr << "Submitted" << std::endl;
         
-        mist::h2::Request &request = req.get();
+        mist::h2::ClientRequest &request = req.get();
+        
+        request.stream().setOnClose(
+          [](boost::system::error_code ec)
+        {
+          std::cerr << "Client stream closed! " << ec.message() << std::endl;
+        });
         
         request.setOnResponse(
           [&request, &session]
-          (mist::h2::Response &response)
+          (mist::h2::ClientResponse &response)
         {
           std::cerr << "Got response!" << std::endl;
           
@@ -298,10 +354,11 @@ main(int argc, char **argv)
             [&response, &session]
             (const std::uint8_t *data, std::size_t length)
           {
-            // for (auto &kv : response.headers()) {
-              // std::cerr << kv.first << ", " << kv.second << std::endl;
-            // }
+            for (auto &kv : response.headers()) {
+              std::cerr << kv.first << ", " << kv.second.first << std::endl;
+            }
             std::cerr << "Got data of length " << length << std::endl;
+            std::cerr << std::string((const char*)data, length) << std::endl;
           });
         });
       });
