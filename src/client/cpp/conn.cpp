@@ -160,7 +160,9 @@ public:
       std::bind(&ConnectContext::torConnection, this, _1));
   }
   
-  void connect(PRNetAddr *addr, client_session_callback cb)
+  //void connectTor()
+  
+  void connectDirect(PRNetAddr *addr, client_session_callback cb)
   {
     Socket &sock = sslCtx.openClientSocket();
     sock.connect(addr,
@@ -220,8 +222,8 @@ make_generator(std::string body)
   {
     std::size_t remaining = body.size() - sent;
     if (remaining == 0) {
-      *flags |= NGHTTP2_DATA_FLAG_EOF;
-      return 0;
+      //*flags |= NGHTTP2_DATA_FLAG_EOF;
+      return NGHTTP2_ERR_DEFERRED;
     } else {
       std::size_t nsend = std::min(remaining, length);
       std::copy(body.data() + sent, body.data() + sent + nsend, data);
@@ -310,7 +312,7 @@ main(int argc, char **argv)
     
       //mist::Socket &sock = sslCtx.openClientSocket();
       std::cerr << "Trying to connect..." << std::endl;
-      ctx.connect(&addr,
+      ctx.connectDirect(&addr,
         [&ctx](mist::h2::ClientSession &session)
       {
         session.setOnError(
@@ -327,7 +329,7 @@ main(int argc, char **argv)
           {"user-agent", {"nghttp2/" NGHTTP2_VERSION, false}},
         };
         auto req = session.submit(ec, "GET", "/", "https", "www.hej.os",
-                                  headers, nullptr);
+                                  headers);
         if (ec)
           std::cerr << ec.message() << std::endl;
         if (!req) {

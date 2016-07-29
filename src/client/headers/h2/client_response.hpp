@@ -1,6 +1,8 @@
 #ifndef __MIST_HEADERS_H2_CLIENT_RESPONSE_HPP__
 #define __MIST_HEADERS_H2_CLIENT_RESPONSE_HPP__
 
+#include <cstddef>
+
 #include "h2/types.hpp"
 #include "h2/lane.hpp"
 

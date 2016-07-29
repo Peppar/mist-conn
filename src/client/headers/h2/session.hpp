@@ -9,6 +9,8 @@
 #include <boost/optional.hpp>
 #include <boost/system/error_code.hpp>
 
+#include <nghttp2/nghttp2.h>
+
 #include "error/nghttp2.hpp"
 #include "error/mist.hpp"
 
@@ -30,6 +32,9 @@ class Session
 {
 private:
 
+  friend class Stream;
+
+  /* Disable copy constructor and copy assign */
   Session(Session &) = delete;
   Session &operator=(Session &) = delete;
 
@@ -53,7 +58,7 @@ private:
    * not re-trigger a write */
   bool _insideCallback;
 
-  /* Called by the socket when data has been read */
+  /* Called by the socket when data has been read; forwards to nghttp2 */
   void readCallback(const std::uint8_t *data, std::size_t length,
                     boost::system::error_code ec);
 
@@ -75,6 +80,9 @@ protected:
   /* Returns true iff there are reads or writes pending */
   bool alive() const;
   
+  /* Returns the raw nghttp2 struct */
+  nghttp2_session *nghttp2Session();
+
   /* nghttp2 callbacks */
   virtual int onBeginHeaders(const nghttp2_frame *frame) = 0;
 
@@ -129,15 +137,13 @@ public:
 
   void setOnError(error_callback cb);
 
-  /* Returns the raw nghttp2 struct */
-  nghttp2_session *nghttp2Session();
-
 };
 
 class ClientSession : public Session
 {
 private:
 
+  /* Disable copy constructor and copy assign */
   ClientSession(Session &) = delete;
   ClientSession &operator=(Session &) = delete;
 
@@ -172,7 +178,7 @@ public:
          std::string scheme,
          std::string authority,
          header_map headers,
-         generator_callback cb);
+         generator_callback cb = nullptr);
 
 };
 
@@ -180,6 +186,7 @@ class ServerSession : public Session
 {
 private:
 
+  /* Disable copy constructor and copy assign */
   ServerSession(Session &) = delete;
   ServerSession &operator=(Session &) = delete;
 

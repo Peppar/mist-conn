@@ -2,9 +2,12 @@
 #define __MIST_HEADERS_H2_STREAM_HPP__
 
 #include <cstddef>
+#include <string>
 
 #include <boost/optional.hpp>
 #include <boost/system/error_code.hpp>
+
+#include <nghttp2/nghttp2.h>
 
 #include "error/nghttp2.hpp"
 #include "error/mist.hpp"
@@ -12,6 +15,7 @@
 #include "memory/nghttp2.hpp"
 
 #include "h2/types.hpp"
+#include "h2/util.hpp"
 #include "h2/client_request.hpp"
 #include "h2/client_response.hpp"
 #include "h2/server_request.hpp"
@@ -28,10 +32,6 @@ class Stream
 {
 private:
 
-  close_callback _onClose;
-
-protected:
-
   friend class Session;
 
   Session &_session;
@@ -43,6 +43,16 @@ protected:
    */
   std::int32_t _streamId;
   
+  close_callback _onClose;
+
+protected:
+
+  /* Returns the raw nghttp2 struct */
+  nghttp2_session *nghttp2Session();
+
+  /* Write a chunk of data to the socket */
+  void write();
+
   virtual int onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
                        std::size_t namelen, const std::uint8_t *value,
                        std::size_t valuelen, std::uint8_t flags) = 0;
@@ -61,23 +71,27 @@ public:
 
   Stream(Session& session);
   
-  bool hasValidStreamId() const;
-
-  std::int32_t streamId() const;
+  Session &session();
 
   void setStreamId(std::int32_t streamId);
-
-  Session &session();
+  
+  bool hasValidStreamId() const;
+  
+  std::int32_t streamId() const;
 
   void setOnClose(close_callback cb);
   
   void close(boost::system::error_code ec);
 
+  void resume();
+
+  boost::system::error_code submitTrailers(const header_map &trailers);
+
 };
 
 class ClientStream : public Stream
 {
-protected:
+private:
 
   friend class ClientSession;
 
@@ -85,6 +99,8 @@ protected:
   
   ClientResponse _response;
   
+protected:
+
   virtual int onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
                        std::size_t namelen, const std::uint8_t *value,
                        std::size_t valuelen, std::uint8_t flags) override;
@@ -116,12 +132,12 @@ public:
                                    std::string authority,
                                    header_map headers,
                                    generator_callback cb);
-  
+
 };
 
 class ServerStream : public Stream
 {
-protected:
+private:
 
   friend class ServerSession;
 
@@ -129,6 +145,8 @@ protected:
   
   ServerResponse _response;
   
+protected:
+
   virtual int onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
                        std::size_t namelen, const std::uint8_t *value,
                        std::size_t valuelen, std::uint8_t flags) override;
@@ -155,7 +173,7 @@ public:
   boost::system::error_code submit(std::uint16_t statusCode,
                                    header_map headers,
                                    generator_callback cb);
-
+  
 };
 
 }

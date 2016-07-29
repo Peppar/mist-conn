@@ -1,26 +1,28 @@
 #ifndef __MIST_CONTEXT_HPP__
 #define __MIST_CONTEXT_HPP__
 
-#include <algorithm>
-#include <cassert>
-#include <iostream>
+#include <cstddef>
+
+//#include <algorithm>
+//#include <cassert>
+//#include <iostream>
 #include <string>
 #include <memory>
-#include <vector>
+//#include <vector>
 #include <list>
 
 /* NSPR Headers */
-#include <nspr.h>
-#include <prthread.h>
-#include <plgetopt.h>
-#include <prerror.h>
-#include <prinit.h>
-#include <prlog.h>
+//#include <nspr.h>
+//#include <prthread.h>
+//#include <plgetopt.h>
+//#include <prerror.h>
+//#include <prinit.h>
+//#include <prlog.h>
 #include <prtypes.h>
-#include <plstr.h>
-#include <prio.h>
-#include <prnetdb.h>
-#include <prinrval.h>
+//#include <plstr.h>
+//#include <prio.h>
+//#include <prnetdb.h>
+//#include <prinrval.h>
 
 /* NSS headers */
 #include <keyhi.h>
@@ -28,12 +30,12 @@
 #include <pk11pub.h>
 #include <pkcs11t.h>
 
-#include <base64.h>
+//#include <base64.h>
 
 #include <nss.h>
 #include <ssl.h>
-#include <sslerr.h>
-#include <secerr.h>
+//#include <sslerr.h>
+//#include <secerr.h>
 #include <secmod.h>
 #include <secitem.h>
 #include <secport.h>
@@ -42,9 +44,8 @@
 #include <cert.h>
 #include <certt.h>
 
-#include <secasn1.h>
+//#include <secasn1.h>
 
-#include <nghttp2/nghttp2.h>
 #include <boost/optional.hpp>
 
 #include "memory/nss.hpp"
@@ -60,7 +61,7 @@ public:
 
   using connection_callback = std::function<void(Socket&)>;
 
-protected:
+private:
 
   friend class SSLContext;
 
@@ -72,9 +73,7 @@ public:
 
   RdvSocket(c_unique_ptr<PRFileDesc> fd, connection_callback cb);
 
-  /*
-   * Accepts a connection from the rendez-vous socket.
-   */
+  /* Accepts a connection from the rendez-vous socket */
   c_unique_ptr<PRFileDesc> accept();
 };
 
@@ -95,42 +94,46 @@ private:
   std::list<RdvSocket> rdvSocks;
   std::list<Socket> sslSocks;
 
-  /*
-   * Upgrades the NSPR socket to an SSL socket.
-   */
+  /* Initialize NSS with the given database directory */
+  void initializeNSS(std::string dbdir);
+  
+  /* Upgrades the NSPR socket to an SSL socket */
   void initializeSecurity(c_unique_ptr<PRFileDesc> &fd);
   
-  /*
-   * Initialize the socket with mist TLS settings.
-   */
+  /* Initialize the socket with mist TLS settings */
   void initializeTLS(Socket &sock);
   
-  /*
-   * Opens a non-blocking socket.
-   */
+  /* Opens a non-blocking socket */
   c_unique_ptr<PRFileDesc> openSocket();
 
-  /*
-   * Opens, binds a non-blocking SSL rendez-vous socket listening to the
-   * specified port.
-   */
-  c_unique_ptr<PRFileDesc> openRdvSocket(uint16_t port, std::size_t backlog = 16);
+  /* Opens, binds a non-blocking SSL rendez-vous socket listening to the
+     specified port */
+  c_unique_ptr<PRFileDesc> openRdvSocket(std::uint16_t port,
+                                         std::size_t backlog = 16);
 
-  /*
-   * Accepts a socket from the specified rendez-vous socket.
-   */
+  /* Accepts a socket from the specified rendez-vous socket */
   void accept(RdvSocket &rdvSock);
 
-  /*
-   * Main event loop.
-   */
+  /* Main event loop */
   void eventLoop();
+
+  /* Called when NSS wants to get the client certificate */
+  SECStatus getClientCert(Socket &socket, CERTDistNames *caNames,
+                          CERTCertificate **pRetCert,
+                          SECKEYPrivateKey **pRetKy);
   
+  /* Called when NSS wants to authenticate the peer certificate */
+  SECStatus authCertificate(Socket &socket, PRBool checkSig, PRBool isServer);
+
+  /* Called when NSS wants us to supply a password */
+  boost::optional<std::string> getPassword(Socket &socket, PK11SlotInfo *info,
+                                           PRBool retry);
+
 public:
 
   SSLContext(const char *nickname);
 
-  void serve(uint16_t servPort, connection_callback cb);
+  void serve(std::uint16_t servPort, connection_callback cb);
 
   void exec();
 

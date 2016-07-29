@@ -21,6 +21,20 @@ Stream::session()
   return _session;
 }
 
+/* Returns the raw nghttp2 struct */
+nghttp2_session *
+Stream::nghttp2Session()
+{
+  return session().nghttp2Session();
+}
+
+/* Write a chunk of data to the socket */
+void
+Stream::write()
+{
+  session().write();
+}
+
 bool
 Stream::hasValidStreamId() const
 {
@@ -68,18 +82,36 @@ Stream::close(boost::system::error_code ec)
   // session().signalWrite();
 // }
 
-// void
-// Stream::resume()
-// {
-  // if (session().isStopped()) {
-    // /* The whole session is stopped */
-    // return;
-  // }
+void
+Stream::resume()
+{
+  if (session().isStopped()) {
+    return;
+  }
+
+  nghttp2_session_resume_data(nghttp2Session(), streamId());
   
-  // nghttp2_session_resume_data(session().nghttp2Session(), streamId());
+  write();
+}
+
+boost::system::error_code
+Stream::submitTrailers(const header_map &trailers)
+{
+  auto nvs = makeHeaderNv(trailers);
   
-  // session().signalWrite();
-// }
+  /* Submit */
+  {
+    auto rv = nghttp2_submit_trailer(nghttp2Session(), streamId(),
+                                     nvs.data(), nvs.size());
+    if (rv) {
+      return make_nghttp2_error(rv);
+    }
+  }
+  
+  write();
+  
+  return boost::system::error_code();
+}
 
 /*
  * ClientStream
@@ -129,8 +161,8 @@ ClientStream::onFrameRecv(const nghttp2_frame *frame)
     break;
   }
   case NGHTTP2_HEADERS: {
-    int statusCode = response().statusCode();
-    bool expectsFinalResponse = statusCode >= 100 && statusCode < 200;
+    bool expectsFinalResponse = response().statusCode()
+      && *response().statusCode() >= 100 && *response().statusCode() < 200;
     
     if (frame->headers.cat == NGHTTP2_HCAT_HEADERS &&
         !expectsFinalResponse) {
@@ -200,8 +232,8 @@ ClientStream::submit(std::string method,
     headers.insert({":path", {std::move(path), false}});
     headers.insert({":scheme", {std::move(scheme), false}});
     headers.insert({":authority", {std::move(authority), false}});
+    nvs = makeHeaderNv(headers);
     request().setHeaders(std::move(headers));
-    nvs = request().makeHeaderNv();
   }
 
   /* Set the data provider, if applicable */
@@ -222,16 +254,17 @@ ClientStream::submit(std::string method,
   
   /* Submit */
   {
-    std::int32_t streamId = nghttp2_submit_request(session().nghttp2Session(),
+    std::int32_t streamId = nghttp2_submit_request(nghttp2Session(),
                                                    nullptr,
                                                    nvs.data(), nvs.size(),
                                                    prdptr, this);
     if (streamId < 0) {
-      return make_nghttp2_error(static_cast<nghttp2_error>(streamId));
+      return make_nghttp2_error(streamId);
     }
 
     setStreamId(streamId);
   }
+  
   return boost::system::error_code();
 }
 
@@ -274,9 +307,8 @@ ServerStream::submit(std::uint16_t statusCode,
   {
     /* Special and mandatory headers */
     headers.insert({":status", {std::to_string(statusCode), false}});
-
+    nvs = makeHeaderNv(headers);
     response().setHeaders(std::move(headers));
-    nvs = response().makeHeaderNv();
   }
 
   /* Set the data provider, if applicable */
@@ -297,34 +329,16 @@ ServerStream::submit(std::uint16_t statusCode,
   
   /* Submit */
   {
-    auto rv = nghttp2_submit_response(session().nghttp2Session(), streamId(),
+    auto rv = nghttp2_submit_response(nghttp2Session(), streamId(),
                                       nvs.data(), nvs.size(), prdptr);
     if (rv) {
-      return make_nghttp2_error(static_cast<nghttp2_error>(rv));
+      return make_nghttp2_error(rv);
     }
   }
   
   return boost::system::error_code();
 }
 
-// void 
-// ServerStream::end(std::string data = "")
-// {
-  // session().end(data);
-// }
-
-// void 
-// ServerStream::end(generator_callback cb)
-// {
-  // session().end(std::move(cb));
-// }
-
-// void 
-// ServerStream(header_map trailers)
-// {
-  // session().writeTrailers(std::move(trailers));
-// }
-  
 int
 ServerStream::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
                        std::size_t namelen, const std::uint8_t *value,
@@ -387,8 +401,10 @@ ServerStream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data,
 int
 ServerStream::onStreamClose(std::uint32_t errorCode)
 {
-  close(make_nghttp2_error(static_cast<nghttp2_error>(errorCode)));
-
+  boost::system::error_code ec;
+  if (errorCode)
+    ec = make_nghttp2_error(errorCode);
+  close(ec);
   return 0;
 }
 

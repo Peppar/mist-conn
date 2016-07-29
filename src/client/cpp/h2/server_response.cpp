@@ -1,6 +1,8 @@
 #include <cstddef>
 #include <string>
 
+#include <nghttp2/nghttp2.h>
+
 #include "h2/server_response.hpp"
 #include "h2/lane.hpp"
 #include "h2/stream.hpp"

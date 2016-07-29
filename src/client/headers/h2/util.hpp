@@ -1,11 +1,14 @@
 #ifndef __MIST_HEADERS_H2_UTIL_HPP__
 #define __MIST_HEADERS_H2_UTIL_HPP__
 
+#include <string>
 #include <type_traits>
 
 #include <boost/lexical_cast.hpp>
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/optional.hpp>
+
+#include <nghttp2/nghttp2.h>
 
 namespace mist
 {
@@ -53,6 +56,8 @@ parseDecimal(const std::string &value) {
     return boost::none;
   }
 }
+
+std::vector<nghttp2_nv> makeHeaderNv(const header_map &headers);
 
 }
 }

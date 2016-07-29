@@ -1,5 +1,6 @@
 #include <boost/system/error_code.hpp>
 #include <nghttp2/nghttp2.h>
+
 #include "error/nghttp2.hpp"
 
 namespace mist
@@ -109,9 +110,10 @@ const boost::system::error_category &nghttp2_category() noexcept
   return instance;
 }
 
-boost::system::error_code make_nghttp2_error(nghttp2_error ev)
+boost::system::error_code make_nghttp2_error(std::uint32_t ev)
 {
-  return boost::system::error_code(ev, nghttp2_category());
+  return boost::system::error_code(static_cast<nghttp2_error>(ev),
+                                   nghttp2_category());
 }
 
 }

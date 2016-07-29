@@ -80,7 +80,7 @@ public:
   using connect_callback = std::function<void(boost::system::error_code)>;
   using handshake_callback = std::function<void(boost::system::error_code)>;
 
-protected:
+private:
 
   friend class SSLContext;
 
@@ -216,6 +216,8 @@ public:
    * Returns true iff we are ready to listen for reads.
    */
   bool isReading() const;
+  
+  SSLContext &context();
   
 };
 

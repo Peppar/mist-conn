@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <iostream>
 #include <string>
 #include <memory>
@@ -67,7 +68,7 @@ namespace mist
 namespace
 {
 
-std::string to_hex(uint8_t byte)
+std::string to_hex(std::uint8_t byte)
 {
   static const char *digits = "0123456789abcdef";
   std::array<char, 2> text{digits[byte >> 4], digits[byte & 0xf]};
@@ -79,34 +80,37 @@ std::string to_hex(It begin, It end)
 {
   std::string text;
   while (begin != end)
-    text += to_hex(uint8_t(*(begin++)));
+    text += to_hex(std::uint8_t(*(begin++)));
   return text;
 }
 
 std::string to_hex(SECItem *item)
 {
-  return to_hex((uint8_t *)item->data, (uint8_t *)(item->data + item->len));
+  return to_hex(static_cast<std::uint8_t *>(item->data),
+                static_cast<std::uint8_t *>(item->data + item->len));
 }
 
 std::string to_hex(std::string str)
 {
-  return to_hex((uint8_t *)str.data(), (uint8_t *)(str.data() + str.size()));
+  return to_hex(static_cast<const std::uint8_t *>(str.data()),
+                static_cast<const std::uint8_t *>(str.data() + str.size()));
 }
 
-std::string hash(const uint8_t *begin, const uint8_t *end,
-  SECOidTag hashOIDTag = SEC_OID_SHA256)
+std::string
+hash(const std::uint8_t *begin, const std::uint8_t *end,
+     SECOidTag hashOIDTag = SEC_OID_SHA256)
 {
-  std::array<uint8_t, 64> digest;
+  std::array<std::uint8_t, 64> digest;
   unsigned int len;
   
   HASH_HashType hashType = HASH_GetHashTypeByOidTag(hashOIDTag);
   
   auto ctx = to_unique(HASH_Create(hashType));
   HASH_Begin(ctx.get());
-  HASH_Update(ctx.get(), (const unsigned char *)begin, end - begin);
-  HASH_End(ctx.get(), (unsigned char *)digest.data(), &len, digest.size());
+  HASH_Update(ctx.get(), static_cast<const unsigned char *>(begin), end - begin);
+  HASH_End(ctx.get(), static_cast<unsigned char *>(digest.data()), &len, digest.size());
   
-  return std::string((const char *)digest.data(), len);
+  return std::string(static_cast<const char *>(digest.data()), len);
 }
 
 std::string certPubKeyHash(CERTCertificate *cert)
@@ -116,31 +120,80 @@ std::string certPubKeyHash(CERTCertificate *cert)
   return hash(derPubKey->data, derPubKey->data + derPubKey->len);
 }
 
+}
+
 /*
- * Initialize NSS with the given database directory
+ * Rendez-vous socket
  */
-void nss_init(std::string dbdir)
+RdvSocket::RdvSocket(c_unique_ptr<PRFileDesc> fd, connection_callback cb)
+  : fd(std::move(fd)), cb(std::move(cb)) {}
+    
+/* Accepts a connection from the rendez-vous socket. */
+c_unique_ptr<PRFileDesc> RdvSocket::accept()
+{
+  assert (fd);
+  c_unique_ptr<PRFileDesc> acceptedFd =
+    to_unique(PR_Accept(fd.get(), nullptr, PR_INTERVAL_NO_TIMEOUT));
+  if (!acceptedFd)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to accept incoming connection"));
+  
+  return std::move(acceptedFd);
+}
+
+/* Initialize NSS with the given database directory */
+void
+SSLContext::initializeNSS(std::string dbdir)
 {
   if (NSS_InitReadWrite(dbdir.c_str()) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to initialize NSS"));
   
-  PK11_SetPasswordFunc([](PK11SlotInfo *info, PRBool retry, void *arg) -> char * {
-    std::cerr << "password func" << std::endl;
-    if (!retry)
-      return PL_strdup("mist");
-    else
+  /* Set the password function to delegate to SSLContext */
+  PK11_SetPasswordFunc(
+    [](PK11SlotInfo *info, PRBool retry, void *arg)
+    -> char *
+  {
+    Socket &socket = *static_cast<Socket *>(arg);
+    boost::optional<std::string> password
+      = socket.context().getPassword(socket, info, retry);
+    if (password) {
+      /* Use PL_strdup; NSS will try to free the pointer later. */
+      return PL_strdup(password->c_str());
+    } else {
       return nullptr;
-  });
+    }
+  }
 }
 
 /*
- * Try to get the certificate and private key with the
- * given nickname
+ * Upgrades the NSPR socket to an SSL socket.
  */
+void SSLContext::initializeSecurity(c_unique_ptr<PRFileDesc> &fd)
+{
+  auto sslSock = to_unique(SSL_ImportFD(nullptr, fd.get()));
+  if (!sslSock)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to wrap SSL socket"));
+
+  /* We no longer own the old pointer */
+  fd.release();
+  
+  fd = std::move(sslSock);
+
+  /* All SSL sockets need SSL_SECURITY, enable it here. For sockets created
+     by accepting a rendez-vous socket, this setting will be inherited */
+  if (SSL_OptionSet(fd.get(), SSL_SECURITY, PR_TRUE) != SECSuccess)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to modify SSL_SECURITY setting"));
+}
+
+namespace
+{
+/* Try to get the certificate and private key with the given nickname */
 std::pair<c_unique_ptr<CERTCertificate>,
           c_unique_ptr<SECKEYPrivateKey>>
-get_auth_data(char *nickname, void *wincx)
+getAuthData(char *nickname, void *wincx)
 {
   std::cerr << "get_auth_data" << std::endl;
   if (nickname) {
@@ -191,20 +244,18 @@ get_auth_data(char *nickname, void *wincx)
   return std::make_pair(to_unique<CERTCertificate>(),
                         to_unique<SECKEYPrivateKey>());
 }
+}
 
-/*
- * Callback used when the client connects to a server requiring a certificate
- */
-SECStatus nss_get_client_cert(void *arg, PRFileDesc *fd,
-  CERTDistNames *caNames, CERTCertificate **pRetCert,
-  SECKEYPrivateKey **pRetKey)
+/* Called when NSS wants to get the client certificate */
+SECStatus
+SSLContext::getClientCert(Socket &socket, CERTDistNames *caNames,
+                          CERTCertificate **pRetCert, SECKEYPrivateKey **pRetKey)
 {
   std::cerr << "nss_get_client_cert" << std::endl;
-  auto authData = get_auth_data((char *)arg, SSL_RevealPinArg(fd));
+  auto authData = getAuthData((char *)nickname, SSL_RevealPinArg(socket.fileDesc()));
   if (!authData.first || !authData.second) {
     /* Private key or certificate was not found */
     return SECFailure;
-    
   } else {
     *pRetCert = authData.first.release();
     *pRetKey = authData.second.release();
@@ -212,16 +263,10 @@ SECStatus nss_get_client_cert(void *arg, PRFileDesc *fd,
   }
 }
 
-/*
- * Callback to verify a certificate
- */
+/* Called when NSS wants to authenticate the peer certificate */
 SECStatus
-auth_certificate(void *arg, PRFileDesc *fd, PRBool checkSig, PRBool isServer)
+SSLContext::authCertificate(Socket &socket, PRBool checkSig, PRBool isServer)
 {
-  Socket &sock = *(Socket *)arg;
-
-  assert (sock.fileDesc() == fd);
-  
   auto cert = to_unique(SSL_PeerCertificate(fd));
   std::string pubKeyHash = certPubKeyHash(cert.get());
   std::cerr << "Public key hash = " << to_hex(pubKeyHash) << std::endl;
@@ -264,129 +309,135 @@ auth_certificate(void *arg, PRFileDesc *fd, PRBool checkSig, PRBool isServer)
   return SECSuccess;
 }
 
-}
-
-RdvSocket::RdvSocket(c_unique_ptr<PRFileDesc> fd, connection_callback cb)
-  : fd(std::move(fd)), cb(std::move(cb)) {}
-    
-/*
- * Accepts a connection from the rendez-vous socket.
- */
-c_unique_ptr<PRFileDesc> RdvSocket::accept()
+/* Called when NSS wants us to supply a password */
+boost::optional<std::string>
+SSLContext::getPassword(Socket &socket, PK11SlotInfo *info, PRBool retry)
 {
-  assert (fd);
-  c_unique_ptr<PRFileDesc> acceptedFd =
-    to_unique(PR_Accept(fd.get(), nullptr, PR_INTERVAL_NO_TIMEOUT));
-  if (!acceptedFd)
-    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      "Unable to accept incoming connection"));
-  
-  return std::move(acceptedFd);
+  /* Use PL_strdup; NSS will try to free the pointer later. */
+  std::cerr << "password func" << std::endl;
+  if (!retry)
+    return "mist";
+  else
+    return boost::none;
 }
 
-/*
- * Upgrades the NSPR socket to an SSL socket.
- */
-void SSLContext::initializeSecurity(c_unique_ptr<PRFileDesc> &fd)
-{
-  auto sslSock = to_unique(SSL_ImportFD(nullptr, fd.get()));
-  if (!sslSock)
-    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      "Unable to wrap SSL socket"));
-
-  /* We no longer own the old pointer */
-  fd.release();
-  
-  fd = std::move(sslSock);
-
-  /* All SSL sockets need SSL_SECURITY, enable it here. For sockets created
-     by accepting a rendez-vous socket, this setting will be inherited */
-  if (SSL_OptionSet(fd.get(), SSL_SECURITY, PR_TRUE) != SECSuccess)
-    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_SECURITY setting"));
-}
-
-/*
- * Initialize the SSL socket with mist TLS settings.
- */
+/* Initialize the SSL socket with mist TLS settings */
 void SSLContext::initializeTLS(Socket &sock)
 {
   PRFileDesc *sslfd = sock.fileDesc();
+
+  /* Set the PK11 user data to the socket pointer */
+  if (SSL_SetPKCS11PinArg(sslfd, &sock) != SECSuccess)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to set PKCS11 Pin Arg"));
   
-  /* Set certificate options */
+  /* Server requests certificate from client */
   if (SSL_OptionSet(sslfd, SSL_REQUEST_CERTIFICATE, PR_TRUE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_REQUEST_CERTIFICATE option"));
+      
+  /* Require certificate */
   if (SSL_OptionSet(sslfd, SSL_REQUIRE_CERTIFICATE , PR_TRUE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_REQUIRE_CERTIFICATE option"));
   
-  /* Enable only TLS */
+  /* Disable SSLv2 */
   if (SSL_OptionSet(sslfd, SSL_ENABLE_SSL2, PR_FALSE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_ENABLE_SSL2 option"));
+      
+  /* Disable SSLv3 */
   if (SSL_OptionSet(sslfd, SSL_ENABLE_SSL3, PR_FALSE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_ENABLE_SSL3 option"));
+      
+  /* Enable TLS */
   if (SSL_OptionSet(sslfd, SSL_ENABLE_TLS, PR_TRUE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_ENABLE_TLS option"));
 
   /* TODO: Require latest TLS version */
-  SSLVersionRange sslverrange = {
-    SSL_LIBRARY_VERSION_TLS_1_2, SSL_LIBRARY_VERSION_TLS_1_2
-  };
-  if (SSL_VersionRangeSet(sslfd, &sslverrange) != SECSuccess)
-    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      "Unable to set SSL version"));
-
+  {
+    SSLVersionRange sslverrange = {
+      SSL_LIBRARY_VERSION_TLS_1_2, SSL_LIBRARY_VERSION_TLS_1_2
+    };
+    if (SSL_VersionRangeSet(sslfd, &sslverrange) != SECSuccess)
+      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+        "Unable to set SSL version"));
+  }
+  
   /* Disable session cache */
   if (SSL_OptionSet(sslfd, SSL_NO_CACHE, PR_TRUE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_NO_CACHE option"));
   
-  /* Enable ALPN, disable NPN */
+  /* Enable ALPN */
   if (SSL_OptionSet(sslfd, SSL_ENABLE_NPN, PR_TRUE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_ENABLE_NPN option"));
+      
+  /* Disable NPN */
   if (SSL_OptionSet(sslfd, SSL_ENABLE_ALPN, PR_TRUE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_ENABLE_ALPN option"));
 
   /* Set the only supported protocol to HTTP/2 */
-  std::vector<unsigned char> protocols(1 + NGHTTP2_PROTO_VERSION_ID_LEN);
   {
+    std::vector<unsigned char> protocols(1 + NGHTTP2_PROTO_VERSION_ID_LEN);
+
     auto it = protocols.begin();
     *(it++) = (unsigned char)NGHTTP2_PROTO_VERSION_ID_LEN;
     it = std::copy((unsigned char *)NGHTTP2_PROTO_VERSION_ID,
       (unsigned char *)(NGHTTP2_PROTO_VERSION_ID
                       + NGHTTP2_PROTO_VERSION_ID_LEN), it);
     assert (it == protocols.end());
-  }
-  if (SSL_SetNextProtoNego(sslfd, protocols.data(), protocols.size()) != SECSuccess)
-    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      "Unable to set protocol negotiation"));
-  if (SSL_AuthCertificateHook(sslfd, auth_certificate, &sock) != SECSuccess)
-    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      "Unable to set AuthCertificateHook"));
 
-  /* Client/server specific options */
+    if (SSL_SetNextProtoNego(sslfd, protocols.data(), protocols.size()) != SECSuccess)
+      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+        "Unable to set protocol negotiation"));
+  }
+  
+  /* Client certificate and key callback */
+  {
+    auto rv = SSL_AuthCertificateHook(sslfd, 
+    [](void *arg, PRFileDesc *fd, PRBool checkSig, PRBool isServer) -> SECStatus
+    {
+      Socket &socket = *static_cast<Socket *>(arg);
+      return socket.context().authCertificate(socket, checkSig, isServer);
+    }, &sock);
+    
+    if (rv != SECSuccess)
+      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+        "Unable to set AuthCertificateHook"));
+  }
+
+  /* Handshake as server */
   if (SSL_OptionSet(sslfd, SSL_HANDSHAKE_AS_SERVER, sock.server ? PR_TRUE : PR_FALSE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_HANDSHAKE_AS_SERVER option"));
+      
+  /* Handshake as client */
   if (SSL_OptionSet(sslfd, SSL_HANDSHAKE_AS_CLIENT, sock.server ? PR_FALSE : PR_TRUE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_HANDSHAKE_AS_CLIENT option"));
 
   if (!sock.server) {
     /* Set client certificate and key callback */
-    if (SSL_GetClientAuthDataHook(sslfd, nss_get_client_cert,
-                                  (void *)nickname) != SECSuccess)
+    auto rv = SSL_GetClientAuthDataHook(sslfd,
+    [](void *arg, PRFileDesc *fd, CERTDistNames *caNames, CERTCertificate **pRetCert,
+       SECKEYPrivateKey **pRetKey) -> SECStatus
+    {
+      Socket &socket = *static_cast<Socket *>(arg);
+      return socket.context().getClientCert(socket, caNames, pRetCert, pRetKey);
+    }, &sock);
+    
+    if (rv != SECSuccess)
       BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
         "Unable to set GetClientAuthDataHook"));
   }
 
-  /* TODO: What does this do? */
+  /* Reset handshake */
+  /* TODO: Check if necessary */
   if(SSL_ResetHandshake(sslfd, sock.server ? PR_TRUE : PR_FALSE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to reset handshake"));
@@ -427,7 +478,7 @@ c_unique_ptr<PRFileDesc> SSLContext::openRdvSocket(uint16_t port, std::size_t ba
      settings */
 
   /* Set server certificate and private key */
-  auto authData = get_auth_data((char *)nickname, SSL_RevealPinArg(fd.get()));
+  auto authData = getAuthData((char *)nickname, SSL_RevealPinArg(fd.get()));
   if (!authData.first || !authData.second)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_mist_error(MIST_ERR_NO_KEY_OR_CERT),
       "Unable to find private key or certificate for rendez-vous socket"));
@@ -604,7 +655,7 @@ void SSLContext::eventLoop()
 SSLContext::SSLContext(const char *nickname)
   : nickname(nickname), signalEvent(to_unique<PRFileDesc>())
 {
-  nss_init("db");
+  initializeNSS("db");
   
   signalEvent = to_unique(PR_NewPollableEvent(), [](PRFileDesc *p) {
     PR_DestroyPollableEvent(p);

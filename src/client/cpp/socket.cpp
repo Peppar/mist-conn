@@ -428,4 +428,13 @@ Socket::signal()
   ctx.signal();
 }
 
+/*
+ * Returns the context of the socket
+ */
+SSLContext &
+Socket::context()
+{
+  ctx;
+}
+
 }
