@@ -28,6 +28,14 @@ namespace h2
 
 class Stream;
 
+class WebSocket
+{
+public:
+
+  void setDataProvider();
+
+};
+
 class Session
 {
 private:
@@ -37,7 +45,7 @@ private:
   /* Disable copy constructor and copy assign */
   Session(Session &) = delete;
   Session &operator=(Session &) = delete;
-
+  
   /* nghttp2 session struct */
   c_unique_ptr<nghttp2_session> h2session;
   
@@ -68,6 +76,8 @@ protected:
 
   Session(Socket &sock, bool isServer);
   
+  virtual ~Session();
+
   /* Start reading from the socket and write the first piece of data */
   void start();
   
@@ -193,6 +203,8 @@ private:
   server_request_callback _onRequest;
 
 protected:
+
+  friend class ServerStream;
 
   virtual int onBeginHeaders(const nghttp2_frame *frame) override;
 

@@ -60,7 +60,7 @@ Session::Session(Socket &sock, bool isServer)
     cbs = to_unique(cbsPtr);
   }
   
-  /* DEBUG: Set on error callback */
+  /* Set on error callback; for debugging purposes */
   nghttp2_session_callbacks_set_error_callback(cbs.get(),
     [](nghttp2_session */*session*/, const char *message, std::size_t length,
        void *user_data) -> int
@@ -163,6 +163,8 @@ Session::Session(Socket &sock, bool isServer)
     }
   }
 }
+
+Session::~Session() {}
 
 namespace
 {
@@ -305,6 +307,7 @@ Session::write()
       length = nsend;
     }
   }
+  
   sock.write(data, length,
     [=] // , anchor(shared_from_this())
     (std::size_t nsent, boost::system::error_code ec)
@@ -495,6 +498,7 @@ ServerSession::onFrameRecv(const nghttp2_frame *frame)
     return 0;
   if (frame->hd.type == NGHTTP2_HEADERS
       && frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
+    /* TODO: Check headers for WebSocket / alternative services */
     if (_onRequest)
       _onRequest(stream->request());
   }

@@ -71,26 +71,29 @@ std::string to_hex(It begin, It end)
 {
   std::string text;
   while (begin != end)
-    text += to_hex(uint8_t(*(begin++)));
+    text += to_hex(static_cast<uint8_t>(*(begin++)));
   return text;
 }
 
 /*
  * Return the negotiated protocol from an NPN/ALPN enabled SSL socket.
  */
-boost::optional<std::string> get_negotiated_protocol(PRFileDesc *fd) {
-  std::array<uint8_t, 50> buf;
+boost::optional<std::string>
+get_negotiated_protocol(PRFileDesc *fd)
+{
+  std::array<std::uint8_t, 50> buf;
   unsigned int buflen;
   SSLNextProtoState state;
 
-  if (SSL_GetNextProto(fd, &state, (unsigned char*)buf.data(),
+  if (SSL_GetNextProto(fd, &state,
+                       reinterpret_cast<unsigned char*>(buf.data()),
                        &buflen, buf.size()) != SECSuccess)
     return boost::none;
 
   switch(state) {
   case SSL_NEXT_PROTO_SELECTED:
   case SSL_NEXT_PROTO_NEGOTIATED:
-    return std::string((const char*)buf.data(), buflen);
+    return std::string(reinterpret_cast<const char*>(buf.data()), buflen);
 
   default:
     return boost::none;
@@ -100,7 +103,9 @@ boost::optional<std::string> get_negotiated_protocol(PRFileDesc *fd) {
 /*
  * Returns true iff the negotiated protocol for the socket is HTTP/2.
  */
-bool is_negotiated_protocol_http2(PRFileDesc *fd) {
+bool
+is_negotiated_protocol_http2(PRFileDesc *fd)
+{
   auto protocol = get_negotiated_protocol(fd);
   return protocol &&
     protocol == std::string(NGHTTP2_PROTO_VERSION_ID,
@@ -125,10 +130,85 @@ Socket::Socket(c_unique_ptr<PRFileDesc> fd, bool server, SSLContext &ctx)
     state = State::Unconnected;
 }
 
+PRFileDesc *
+Socket::fileDesc()
+{
+  return fd.get();
+}
+
+PRInt16
+Socket::inFlags() const
+{
+  switch (state) {
+  case Socket::State::Handshaking:
+  {
+    std::cerr << "Socket handshaking poll" << std::endl;
+    return PR_POLL_READ;
+  }
+  case Socket::State::Connecting:
+  {
+    std::cerr << "Socket connect poll" << std::endl;
+    return PR_POLL_WRITE|PR_POLL_EXCEPT;
+  }
+  case Socket::State::Connected:
+  case Socket::State::Open:
+  {
+    PRInt16 flags
+      = (i->isReading() ? PR_POLL_READ : 0)   // 1
+      | (i->isWriting() ? PR_POLL_WRITE : 0); // 2
+    std::cerr << "Socket polling with flags " << flags << std::endl;
+    return flags;
+  }
+  case Socket::State::Closed:
+    return 0;
+  }
+}
+
+void
+Socket::process(PRInt16 inFlags, PRInt16 outFlags)
+{
+  /* Add the SSL sockets */
+  for (auto i = sslSocks.begin(); i != sslSocks.end(); ) {
+    switch (i->state) {
+    case Socket::State::Handshaking:
+    {
+      std::cerr << "Socket handshaking poll" << std::endl;
+      PRInt16 in_flags = PR_POLL_READ;
+      pds.push_back(PRPollDesc{i->fileDesc(), in_flags, 0});
+      break;
+    }
+    case Socket::State::Connecting:
+    {
+      std::cerr << "Socket connect poll" << std::endl;
+      PRInt16 in_flags = PR_POLL_WRITE|PR_POLL_EXCEPT;
+      pds.push_back(PRPollDesc{i->fileDesc(), in_flags, 0});
+      break;
+    }
+    case Socket::State::Connected:
+    case Socket::State::Open:
+    {
+      PRInt16 in_flags
+        = (i->isReading() ? PR_POLL_READ : 0)   // 1
+        | (i->isWriting() ? PR_POLL_WRITE : 0); // 2
+      std::cerr << "Socket polling with flags " << in_flags << std::endl;
+      pds.push_back(PRPollDesc{i->fileDesc(), in_flags, 0});
+      break;
+    }
+    case Socket::State::Closed:
+      /* Remove the closed connection */
+      std::cerr << "Erased one socket" << std::endl;
+      i = sslSocks.erase(i);
+      continue;
+    }
+    ++i;
+  }
+}
+
 /*
  * Connect to the specified address.
  */
-void Socket::connect(PRNetAddr *addr, connect_callback cb)
+void
+Socket::connect(PRNetAddr *addr, connect_callback cb)
 {
   assert (state == State::Unconnected);
   
@@ -158,7 +238,8 @@ void Socket::connect(PRNetAddr *addr, connect_callback cb)
  * Called when the socket is connecting and has signaled that it
  * is ready to continue.
  */
-void Socket::_connectContinue(PRInt16 out_flags)
+void
+Socket::_connectContinue(PRInt16 out_flags)
 {
   assert (state == State::Connecting);
   if (PR_ConnectContinue(fd.get(), out_flags) != PR_SUCCESS) {
@@ -181,7 +262,8 @@ void Socket::_connectContinue(PRInt16 out_flags)
 /*
  * Begin TLS communication.
  */ 
-void Socket::handshake(handshake_callback cb)
+void
+Socket::handshake(handshake_callback cb, peer_auth_callback authCb)
 {
   assert (state == State::Connected);
   assert (r.state == Read::State::Off);
@@ -189,6 +271,7 @@ void Socket::handshake(handshake_callback cb)
 
   state = State::Handshaking;
   h.cb = std::move(cb);
+  h.authCb = std::move(authCb);
 
   if (!server) {
     /* If this socket was created by the client, the socket has
@@ -204,7 +287,8 @@ void Socket::handshake(handshake_callback cb)
  * Called when the socket is handhaking and has signaled that it
  * is ready to continue.
  */
-void Socket::_handshake()
+void
+Socket::_handshake()
 {
   assert (state == State::Handshaking);
   if (SSL_ForceHandshake(fd.get()) != SECSuccess) {
@@ -226,6 +310,20 @@ void Socket::_handshake()
       }
     }
   }
+}
+
+/*
+ * Called by the context to authenticate the peer.
+ */
+bool
+Socket::_authenticate(CERTCertificate *cert)
+{
+  bool authenticated = true;
+  if (h.authCb) {
+    authenticated = h.authCb(cert);
+    h.authCb = nullptr;
+  }
+  return authenticated;
 }
 
 /*

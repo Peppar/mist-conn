@@ -71,10 +71,21 @@ private:
 
 public:
 
+  inline PRFileDesc *fileDesc() { return fd.get(); };
+
   RdvSocket(c_unique_ptr<PRFileDesc> fd, connection_callback cb);
 
   /* Accepts a connection from the rendez-vous socket */
   c_unique_ptr<PRFileDesc> accept();
+};
+
+struct Timeout
+{
+  PRIntervalTime established;
+  PRIntervalTime interval;
+  std::function<void()> callback;
+  
+  Timeout(PRIntervalTime interval, std::function<void()> callback);
 };
 
 class SSLContext
@@ -87,15 +98,16 @@ private:
 
   friend class Socket;
 
-  const char *nickname;
+  std::string nickname;
   
   c_unique_ptr<PRFileDesc> signalEvent;
 
   std::list<RdvSocket> rdvSocks;
   std::list<Socket> sslSocks;
+  std::list<Timeout> timeouts;
 
   /* Initialize NSS with the given database directory */
-  void initializeNSS(std::string dbdir);
+  void initializeNSS(const std::string &dbdir);
   
   /* Upgrades the NSPR socket to an SSL socket */
   void initializeSecurity(c_unique_ptr<PRFileDesc> &fd);
@@ -114,14 +126,15 @@ private:
   /* Accepts a socket from the specified rendez-vous socket */
   void accept(RdvSocket &rdvSock);
 
-  /* Main event loop */
-  void eventLoop();
+  /* Wait for one round of I/O events and process them
+   * Timeout in milliseconds */
+  void ioStep(unsigned int maxTimeout);
 
   /* Called when NSS wants to get the client certificate */
   SECStatus getClientCert(Socket &socket, CERTDistNames *caNames,
                           CERTCertificate **pRetCert,
                           SECKEYPrivateKey **pRetKy);
-  
+
   /* Called when NSS wants to authenticate the peer certificate */
   SECStatus authCertificate(Socket &socket, PRBool checkSig, PRBool isServer);
 
@@ -131,7 +144,7 @@ private:
 
 public:
 
-  SSLContext(const char *nickname);
+  SSLContext(const std::string &dbdir, const std::string &nickname);
 
   void serve(std::uint16_t servPort, connection_callback cb);
 
@@ -139,7 +152,10 @@ public:
 
   Socket &openClientSocket();
 
+  void setTimeout(unsigned int interval, std::function<void()> callback);
+
   void signal();
+
 };
 
 }

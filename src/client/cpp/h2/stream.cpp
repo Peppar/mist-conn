@@ -14,6 +14,8 @@ Stream::Stream(Session &session)
   : _session(session),
     _streamId(-1)
   {}
+  
+Stream::~Stream() {}
 
 Session &
 Stream::session()

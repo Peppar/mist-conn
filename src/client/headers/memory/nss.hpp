@@ -10,6 +10,8 @@
 
 #include <nspr.h>
 
+#include <prproces.h>
+
 #include <nss.h>
 
 #include <pk11priv.h>
@@ -69,12 +71,52 @@ struct c_deleter<HASHContext>
 };
 
 template<>
+struct c_deleter<PRArenaPool>
+{
+  using type = void(*)(PRArenaPool*);
+  static void del(PRArenaPool *ptr)
+  {
+    PORT_FreeArena(ptr, PR_FALSE);
+  }
+};
+
+template<>
+struct c_deleter<PRDir>
+{
+  using type = void(*)(PRDir*);
+  static void del(PRDir *ptr)
+  {
+    PR_CloseDir(ptr);
+  }
+};
+
+template<>
 struct c_deleter<PRFileDesc>
 {
   using type = void(*)(PRFileDesc*);
   static void del(PRFileDesc *ptr)
   {
     PR_Close(ptr);
+  }
+};
+
+template<>
+struct c_deleter<PRProcess>
+{
+  using type = void(*)(PRProcess*);
+  static void del(PRProcess *ptr)
+  {
+    PR_KillProcess(ptr);
+  }
+};
+
+template<>
+struct c_deleter<PRProcessAttr>
+{
+  using type = void(*)(PRProcessAttr*);
+  static void del(PRProcessAttr *ptr)
+  {
+    PR_DestroyProcessAttr(ptr);
   }
 };
 
@@ -105,16 +147,6 @@ struct c_deleter<PK11SymKey>
   static void del(PK11SymKey *ptr)
   {
     PK11_FreeSymKey(ptr);
-  }
-};
-
-template<>
-struct c_deleter<PRArenaPool>
-{
-  using type = void(*)(PRArenaPool*);
-  static void del(PRArenaPool *ptr)
-  {
-    PORT_FreeArena(ptr, PR_FALSE);
   }
 };
 

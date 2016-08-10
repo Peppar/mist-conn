@@ -49,14 +49,14 @@
 #include <boost/system/error_code.hpp>
 
 #include "memory/nss.hpp"
-#include "cbuffer.hpp"
+#include "filedescriptor.hpp"
 
 namespace mist
 {
 
 class SSLContext;
 
-class Socket
+class Socket : public FileDescriptor
 {
 public:
 
@@ -79,6 +79,7 @@ public:
   using read_callback = std::function<void(const uint8_t *, std::size_t, boost::system::error_code)>;
   using connect_callback = std::function<void(boost::system::error_code)>;
   using handshake_callback = std::function<void(boost::system::error_code)>;
+  using peer_auth_callback = std::function<bool(CERTCertificate*)>;
 
 private:
 
@@ -135,6 +136,7 @@ private:
   struct Handshake
   {
     handshake_callback cb;
+    peer_auth_callback authCb;
   } h;
   
   bool server; /* True iff socket accepted by a listen socket */
@@ -164,18 +166,23 @@ private:
    * Called when the socket is ready for writing.
    */
   void _write();
-  
+
+  /*
+   * Called by the context to authenticate the peer.
+   */
+  bool _authenticate(CERTCertificate* cert);
+
   /*
    * Signal to the context event loop that we have things to do.
    */
   void signal();
-
+  
 public:
-
-  inline PRFileDesc *fileDesc() { return fd.get(); };
 
   Socket(c_unique_ptr<PRFileDesc> fd, bool server, SSLContext &ctx);
 
+  virtual PRFileDesc *fileDesc();
+  
   /*
    * Connect to the specified address.
    */
@@ -184,7 +191,8 @@ public:
   /*
    * Perform a TLS handshake.
    */
-  void handshake(handshake_callback cb = nullptr);
+  void handshake(handshake_callback cb = nullptr,
+                 peer_auth_callback authCb = nullptr);
 
   /*
    * Read a fixed-length packet.
@@ -200,7 +208,7 @@ public:
    * Write.
    */
   void write(const uint8_t *data, std::size_t length,
-    write_callback cb = nullptr);
+             write_callback cb = nullptr);
 
   /*
    * Close the socket.

@@ -68,7 +68,8 @@ namespace mist
 namespace
 {
 
-std::string to_hex(std::uint8_t byte)
+std::string
+to_hex(std::uint8_t byte)
 {
   static const char *digits = "0123456789abcdef";
   std::array<char, 2> text{digits[byte >> 4], digits[byte & 0xf]};
@@ -76,24 +77,27 @@ std::string to_hex(std::uint8_t byte)
 }
 
 template<typename It>
-std::string to_hex(It begin, It end)
+std::string
+to_hex(It begin, It end)
 {
   std::string text;
   while (begin != end)
-    text += to_hex(std::uint8_t(*(begin++)));
+    text += to_hex(static_cast<std::uint8_t>(*(begin++)));
   return text;
 }
 
-std::string to_hex(SECItem *item)
+std::string
+to_hex(SECItem *item)
 {
-  return to_hex(static_cast<std::uint8_t *>(item->data),
-                static_cast<std::uint8_t *>(item->data + item->len));
+  return to_hex(reinterpret_cast<std::uint8_t *>(item->data),
+                reinterpret_cast<std::uint8_t *>(item->data + item->len));
 }
 
-std::string to_hex(std::string str)
+std::string
+to_hex(std::string str)
 {
-  return to_hex(static_cast<const std::uint8_t *>(str.data()),
-                static_cast<const std::uint8_t *>(str.data() + str.size()));
+  return to_hex(reinterpret_cast<const std::uint8_t *>(str.data()),
+              reinterpret_cast<const std::uint8_t *>(str.data() + str.size()));
 }
 
 std::string
@@ -107,19 +111,21 @@ hash(const std::uint8_t *begin, const std::uint8_t *end,
   
   auto ctx = to_unique(HASH_Create(hashType));
   HASH_Begin(ctx.get());
-  HASH_Update(ctx.get(), static_cast<const unsigned char *>(begin), end - begin);
-  HASH_End(ctx.get(), static_cast<unsigned char *>(digest.data()), &len, digest.size());
+  HASH_Update(ctx.get(),
+    reinterpret_cast<const unsigned char *>(begin), end - begin);
+  HASH_End(ctx.get(),
+    reinterpret_cast<unsigned char *>(digest.data()), &len, digest.size());
   
-  return std::string(static_cast<const char *>(digest.data()), len);
+  return std::string(reinterpret_cast<const char *>(digest.data()), len);
 }
 
-std::string certPubKeyHash(CERTCertificate *cert)
+std::string
+certPubKeyHash(CERTCertificate *cert)
 {
   auto pubKey = to_unique(CERT_ExtractPublicKey(cert));
   auto derPubKey = to_unique(SECKEY_EncodeDERSubjectPublicKeyInfo(pubKey.get()));
   return hash(derPubKey->data, derPubKey->data + derPubKey->len);
 }
-
 }
 
 /*
@@ -129,7 +135,8 @@ RdvSocket::RdvSocket(c_unique_ptr<PRFileDesc> fd, connection_callback cb)
   : fd(std::move(fd)), cb(std::move(cb)) {}
     
 /* Accepts a connection from the rendez-vous socket. */
-c_unique_ptr<PRFileDesc> RdvSocket::accept()
+c_unique_ptr<PRFileDesc>
+RdvSocket::accept()
 {
   assert (fd);
   c_unique_ptr<PRFileDesc> acceptedFd =
@@ -141,9 +148,44 @@ c_unique_ptr<PRFileDesc> RdvSocket::accept()
   return std::move(acceptedFd);
 }
 
+/*
+ * SSLContext
+ */
+SSLContext::SSLContext(const std::string &dbdir,
+                       const std::string &nickname)
+  : nickname(nickname), signalEvent(to_unique<PRFileDesc>())
+{
+  initializeNSS(dbdir);
+  
+  signalEvent = to_unique(PR_NewPollableEvent(), [](PRFileDesc *p) {
+    PR_DestroyPollableEvent(p);
+  });
+}
+
+void
+SSLContext::serve(std::uint16_t servPort, connection_callback cb)
+{
+  rdvSocks.emplace_back(openRdvSocket(servPort), std::move(cb));
+}
+
+void
+SSLContext::exec()
+{
+  unsigned int timeout = 10000;
+  while(1)
+    ioStep(timeout);
+}
+
+Socket &
+SSLContext::openClientSocket()
+{
+  sslSocks.emplace_back(openSocket(), false, *this);
+  return *(--sslSocks.end());
+}
+
 /* Initialize NSS with the given database directory */
 void
-SSLContext::initializeNSS(std::string dbdir)
+SSLContext::initializeNSS(const std::string &dbdir)
 {
   if (NSS_InitReadWrite(dbdir.c_str()) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
@@ -163,13 +205,12 @@ SSLContext::initializeNSS(std::string dbdir)
     } else {
       return nullptr;
     }
-  }
+  });
 }
 
-/*
- * Upgrades the NSPR socket to an SSL socket.
- */
-void SSLContext::initializeSecurity(c_unique_ptr<PRFileDesc> &fd)
+/* Upgrades the NSPR socket to an SSL socket */
+void
+SSLContext::initializeSecurity(c_unique_ptr<PRFileDesc> &fd)
 {
   auto sslSock = to_unique(SSL_ImportFD(nullptr, fd.get()));
   if (!sslSock)
@@ -193,13 +234,13 @@ namespace
 /* Try to get the certificate and private key with the given nickname */
 std::pair<c_unique_ptr<CERTCertificate>,
           c_unique_ptr<SECKEYPrivateKey>>
-getAuthData(char *nickname, void *wincx)
+getAuthData(const std::string &nickname, void *wincx)
 {
   std::cerr << "get_auth_data" << std::endl;
-  if (nickname) {
+  if (!nickname.empty()) {
     auto cert = to_unique(CERT_FindUserCertByUsage(
-      CERT_GetDefaultCertDB(), nickname, certUsageSSLClient,
-      PR_FALSE, wincx));
+      CERT_GetDefaultCertDB(), const_cast<char *>(nickname.c_str()),
+      certUsageSSLClient, PR_FALSE, wincx));
       
     if (!cert)
       return std::make_pair(to_unique<CERTCertificate>(),
@@ -252,7 +293,7 @@ SSLContext::getClientCert(Socket &socket, CERTDistNames *caNames,
                           CERTCertificate **pRetCert, SECKEYPrivateKey **pRetKey)
 {
   std::cerr << "nss_get_client_cert" << std::endl;
-  auto authData = getAuthData((char *)nickname, SSL_RevealPinArg(socket.fileDesc()));
+  auto authData = getAuthData(nickname, SSL_RevealPinArg(socket.fileDesc()));
   if (!authData.first || !authData.second) {
     /* Private key or certificate was not found */
     return SECFailure;
@@ -267,7 +308,7 @@ SSLContext::getClientCert(Socket &socket, CERTDistNames *caNames,
 SECStatus
 SSLContext::authCertificate(Socket &socket, PRBool checkSig, PRBool isServer)
 {
-  auto cert = to_unique(SSL_PeerCertificate(fd));
+  auto cert = to_unique(SSL_PeerCertificate(socket.fileDesc()));
   std::string pubKeyHash = certPubKeyHash(cert.get());
   std::cerr << "Public key hash = " << to_hex(pubKeyHash) << std::endl;
 
@@ -275,7 +316,7 @@ SSLContext::authCertificate(Socket &socket, PRBool checkSig, PRBool isServer)
   if (CERT_CheckCertValidTimes(cert.get(), PR_Now(), PR_TRUE)
       != secCertTimeValid)
     return SECFailure;
-
+  
   /* TODO: Verify against revocation list */
 
   /* TODO: OCSP? */
@@ -304,10 +345,16 @@ SSLContext::authCertificate(Socket &socket, PRBool checkSig, PRBool isServer)
     // }
   // }
   
-  /* TODO: Verify that we actually know this private key */
-
+  if (!socket._authenticate(cert.get()))
+    return SECFailure;
+  
   return SECSuccess;
 }
+
+/*void setPeerAuthCallback(peer_auth_callback cb)
+{
+  _peerAuthCb = std::move(cb);
+}*/
 
 /* Called when NSS wants us to supply a password */
 boost::optional<std::string>
@@ -316,13 +363,35 @@ SSLContext::getPassword(Socket &socket, PK11SlotInfo *info, PRBool retry)
   /* Use PL_strdup; NSS will try to free the pointer later. */
   std::cerr << "password func" << std::endl;
   if (!retry)
-    return "mist";
+    return std::string("mist");
   else
     return boost::none;
 }
 
+namespace
+{
+/* Returns an nghttp2-compatible protocols string */
+std::vector<unsigned char>
+h2Protocol()
+{
+  auto pData
+    = reinterpret_cast<const unsigned char *>(NGHTTP2_PROTO_VERSION_ID);
+  auto pLen = static_cast<unsigned char>(NGHTTP2_PROTO_VERSION_ID_LEN);
+
+  std::vector<unsigned char> protocols(1 + pLen);
+
+  auto it = protocols.begin();
+  *(it++) = pLen;
+  it = std::copy(pData, pData + pLen, it);
+  assert (it == protocols.end());
+  
+  return std::move(protocols);
+}
+}
+
 /* Initialize the SSL socket with mist TLS settings */
-void SSLContext::initializeTLS(Socket &sock)
+void
+SSLContext::initializeTLS(Socket &sock)
 {
   PRFileDesc *sslfd = sock.fileDesc();
 
@@ -383,15 +452,7 @@ void SSLContext::initializeTLS(Socket &sock)
 
   /* Set the only supported protocol to HTTP/2 */
   {
-    std::vector<unsigned char> protocols(1 + NGHTTP2_PROTO_VERSION_ID_LEN);
-
-    auto it = protocols.begin();
-    *(it++) = (unsigned char)NGHTTP2_PROTO_VERSION_ID_LEN;
-    it = std::copy((unsigned char *)NGHTTP2_PROTO_VERSION_ID,
-      (unsigned char *)(NGHTTP2_PROTO_VERSION_ID
-                      + NGHTTP2_PROTO_VERSION_ID_LEN), it);
-    assert (it == protocols.end());
-
+    auto protocols = h2Protocol();
     if (SSL_SetNextProtoNego(sslfd, protocols.data(), protocols.size()) != SECSuccess)
       BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
         "Unable to set protocol negotiation"));
@@ -443,10 +504,9 @@ void SSLContext::initializeTLS(Socket &sock)
       "Unable to reset handshake"));
 }
 
-/*
- * Open a non-blocking socket.
- */
-c_unique_ptr<PRFileDesc> SSLContext::openSocket()
+/* Open a non-blocking socket */
+c_unique_ptr<PRFileDesc>
+SSLContext::openSocket()
 {
   auto fd = to_unique(PR_OpenTCPSocket(PR_AF_INET));
   if (!fd)
@@ -467,7 +527,8 @@ c_unique_ptr<PRFileDesc> SSLContext::openSocket()
  * Opens, binds a non-blocking SSL rendez-vous socket listening to the
  * specified port.
  */
-c_unique_ptr<PRFileDesc> SSLContext::openRdvSocket(uint16_t port, std::size_t backlog)
+c_unique_ptr<PRFileDesc>
+SSLContext::openRdvSocket(uint16_t port, std::size_t backlog)
 {
   auto fd = openSocket();
   
@@ -478,7 +539,7 @@ c_unique_ptr<PRFileDesc> SSLContext::openRdvSocket(uint16_t port, std::size_t ba
      settings */
 
   /* Set server certificate and private key */
-  auto authData = getAuthData((char *)nickname, SSL_RevealPinArg(fd.get()));
+  auto authData = getAuthData(nickname, SSL_RevealPinArg(fd.get()));
   if (!authData.first || !authData.second)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_mist_error(MIST_ERR_NO_KEY_OR_CERT),
       "Unable to find private key or certificate for rendez-vous socket"));
@@ -506,42 +567,55 @@ c_unique_ptr<PRFileDesc> SSLContext::openRdvSocket(uint16_t port, std::size_t ba
   return std::move(fd);
 }
 
-/*
- * Accepts a connection from the rendez-vous socket.
- */
-void SSLContext::accept(RdvSocket &rdvSock)
+/* Accepts a connection from the rendez-vous socket */
+void
+SSLContext::accept(RdvSocket &rdvSock)
 {
   sslSocks.emplace_back(rdvSock.accept(), true, *this);
   Socket &sock = *(--sslSocks.end());
   rdvSock.cb(sock);
 }
 
-/*
- * Forces the eventLoop to wake up.
- */
-void SSLContext::signal()
+/* Forces the eventLoop to wake up */
+void
+SSLContext::signal()
 {
   if (PR_SetPollableEvent(signalEvent.get()) != PR_SUCCESS)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to signal write"));
 }
 
-/*
- * Main event loop.
- */
-void SSLContext::eventLoop()
+Timeout::Timeout(PRIntervalTime interval, std::function<void()> callback)
+  : interval(interval), callback(std::move(callback))
 {
-  while (1) {
-    std::vector<PRPollDesc> pds;
-    
+  established = PR_IntervalNow();
+}
+
+/* Set a timeout (in milliseconds) */
+void
+SSLContext::setTimeout(unsigned int interval, std::function<void()> callback)
+{
+  timeouts.emplace_back(PR_MillisecondsToInterval(interval), callback);
+}
+
+/* Wait for one round of I/O events and process them.
+ * Timeout in milliseconds */
+void
+SSLContext::ioStep(unsigned int maxTimeout)
+{
+  /* Prepare the poll descriptor structures */
+  std::vector<PRPollDesc> pds;
+  {
+    pds.reserve(1 + rdvSocks.size() + sslSocks.size());
+
     /* Add the write event */
     pds.push_back(PRPollDesc{signalEvent.get(), PR_POLL_READ});
-    
+
     /* Add the rendez-vous sockets */
     for (auto i = rdvSocks.begin(); i != rdvSocks.end(); ++i) {
-      pds.push_back(PRPollDesc{i->fd.get(), PR_POLL_READ|PR_POLL_EXCEPT, 0});
+      pds.push_back(PRPollDesc{i->fileDesc(), PR_POLL_READ|PR_POLL_EXCEPT, 0});
     }
-    
+
     /* Add the SSL sockets */
     for (auto i = sslSocks.begin(); i != sslSocks.end(); ) {
       switch (i->state) {
@@ -577,29 +651,55 @@ void SSLContext::eventLoop()
       }
       ++i;
     }
-    
-    PRInt32 n = PR_Poll(pds.data(), pds.size(),
-      PR_MillisecondsToInterval(10000));
-    if (n == -1)
-      throw new std::runtime_error("Poll failed");
-    if (!n) {
-      std::cerr << "Timeout" << std::endl;
+  }
+
+  /* Determine minimum timeout */
+  PRIntervalTime timeoutInterval = PR_MillisecondsToInterval(maxTimeout);
+  {
+    PRIntervalTime now = PR_IntervalNow();
+    for (auto &timeout : timeouts) {
+      PRIntervalTime elapsedSince
+        = static_cast<PRIntervalTime>(now - timeout.established);
+      if (elapsedSince > timeout.interval) {
+        /* Timeout already expired */
+        timeoutInterval = PR_INTERVAL_NO_WAIT;
+        break;
+      } else if (timeout.interval - elapsedSince < timeoutInterval) {
+        /* This is the nearest timeout so far */
+        timeoutInterval = timeout.interval - elapsedSince;
+      }
+    }
+  }
+
+  /* Poll */
+  {
+    PRInt32 n = PR_Poll(pds.data(), pds.size(), timeoutInterval);
+    if (n == -1) {
+      BOOST_THROW_EXCEPTION(boost::system::system_error(
+        make_mist_error(MIST_ERR_ASSERTION), "Poll failed"));
+    } else if (!n) {
       /* Timeout */
-      continue;
+      std::cerr << "Timeout" << std::endl;
+    }
+  }
+
+  /* Handle the resulting flags from the poll descriptors */
+  {
+    auto j = pds.begin();
+
+    /* Handle signalEvent */
+    {
+      if (j->out_flags & PR_POLL_READ) {
+        std::cerr << "signalEvent!" << std::endl;
+        if (PR_WaitForPollableEvent(signalEvent.get()) != PR_SUCCESS)
+          BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+            "Unable to wait for signalEvent"));
+      }
+      ++j;
     }
 
-    auto j = pds.begin();
-    
-    if (j->out_flags & PR_POLL_READ) {
-      std::cerr << "signalEvent!" << std::endl;
-      if (PR_WaitForPollableEvent(signalEvent.get()) != PR_SUCCESS)
-        BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-          "Unable to wait for signalEvent"));
-    }
-    ++j;
-    
+    /* Handle the rendez-vous sockets */
     for (auto i = rdvSocks.begin(); i != rdvSocks.end(); ++i, ++j) {
-      /* Handle the rendez-vous sockets */
       PRInt16 out_flags = j->out_flags;
       if (out_flags & PR_POLL_READ) {
         std::cerr << "Rdv socket PR_POLL_READ" << std::endl;
@@ -609,7 +709,7 @@ void SSLContext::eventLoop()
         std::cerr << "Rdv socket PR_POLL_EXCEPT" << std::endl;
       }
     }
-    
+
     /* Handle the SSL sockets */
     for (auto i = sslSocks.begin(); j != pds.end(); ++i, ++j) {
       PRInt16 out_flags = j->out_flags;
@@ -650,32 +750,21 @@ void SSLContext::eventLoop()
       }
     }
   }
-}
 
-SSLContext::SSLContext(const char *nickname)
-  : nickname(nickname), signalEvent(to_unique<PRFileDesc>())
-{
-  initializeNSS("db");
-  
-  signalEvent = to_unique(PR_NewPollableEvent(), [](PRFileDesc *p) {
-    PR_DestroyPollableEvent(p);
-  });
-}
-
-void SSLContext::serve(uint16_t servPort, connection_callback cb)
-{
-  rdvSocks.emplace_back(openRdvSocket(servPort), std::move(cb));
-}
-
-void SSLContext::exec()
-{
-  eventLoop();
-}
-
-Socket &SSLContext::openClientSocket()
-{
-  sslSocks.emplace_back(openSocket(), false, *this);
-  return *(--sslSocks.end());
+  /* Handle timeouts */
+  {
+    PRIntervalTime now = PR_IntervalNow();
+    for (auto i = timeouts.begin(); i != timeouts.end(); ) {
+      PRIntervalTime elapsedSince
+        = static_cast<PRIntervalTime>(now - i->established);
+      if (elapsedSince > i->interval) {
+        i->callback();
+        i = timeouts.erase(i);
+      } else {
+        ++i;
+      }
+    }
+  }
 }
 
 }

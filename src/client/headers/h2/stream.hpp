@@ -33,7 +33,7 @@ class Stream
 private:
 
   friend class Session;
-
+  
   Session &_session;
   
   /* RFC7540 5.1.1
@@ -47,6 +47,8 @@ private:
 
 protected:
 
+  Stream(Session& session);
+  
   /* Returns the raw nghttp2 struct */
   nghttp2_session *nghttp2Session();
 
@@ -69,8 +71,8 @@ protected:
   
 public:
 
-  Stream(Session& session);
-  
+  virtual ~Stream();
+
   Session &session();
 
   void setStreamId(std::int32_t streamId);
