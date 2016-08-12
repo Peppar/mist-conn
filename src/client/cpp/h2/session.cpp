@@ -62,7 +62,7 @@ Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
   
   /* Set on error callback; for debugging purposes */
   nghttp2_session_callbacks_set_error_callback(cbs.get(),
-    [](nghttp2_session */*session*/, const char *message, std::size_t length,
+    [](nghttp2_session * /*session*/, const char *message, std::size_t length,
        void *user_data) -> int
   {
     std::cerr << "nghttp2 signalled error: "
@@ -72,7 +72,7 @@ Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
   
   /* Set on begin headers callback */
   nghttp2_session_callbacks_set_on_begin_headers_callback(cbs.get(),
-    [](nghttp2_session */*session*/, const nghttp2_frame *frame,
+    [](nghttp2_session * /*session*/, const nghttp2_frame *frame,
        void *user_data) -> int
   {
     return static_cast<Session *>(user_data)->onBeginHeaders(frame);
@@ -80,7 +80,7 @@ Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
 
   /* Set on header callback */
   nghttp2_session_callbacks_set_on_header_callback(cbs.get(),
-    [](nghttp2_session */*session*/, const nghttp2_frame *frame,
+    [](nghttp2_session * /*session*/, const nghttp2_frame *frame,
        const std::uint8_t *name, std::size_t namelen,
        const std::uint8_t *value, std::size_t valuelen, std::uint8_t flags,
        void *user_data) -> int
@@ -91,7 +91,7 @@ Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
   
   /* Set on stream frame send callback */
   nghttp2_session_callbacks_set_on_frame_send_callback(cbs.get(),
-    [](nghttp2_session */*session*/, const nghttp2_frame *frame,
+    [](nghttp2_session * /*session*/, const nghttp2_frame *frame,
        void *user_data) -> int
   {
     return static_cast<Session *>(user_data)->onFrameSend(frame);
@@ -99,7 +99,7 @@ Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
   
   /* Set on frame not send callback */
   nghttp2_session_callbacks_set_on_frame_not_send_callback(cbs.get(),
-    [](nghttp2_session */*session*/, const nghttp2_frame *frame,
+    [](nghttp2_session * /*session*/, const nghttp2_frame *frame,
        int error_code, void *user_data) -> int
   {
     return static_cast<Session *>(user_data)->onFrameNotSend(frame, error_code);
@@ -107,7 +107,7 @@ Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
   
   /* Set on frame receive callback */
   nghttp2_session_callbacks_set_on_frame_recv_callback(cbs.get(),
-    [](nghttp2_session */*session*/, const nghttp2_frame *frame,
+    [](nghttp2_session * /*session*/, const nghttp2_frame *frame,
        void *user_data) -> int
   {
     return static_cast<Session *>(user_data)->onFrameRecv(frame);
@@ -115,7 +115,7 @@ Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
   
   /* Set on data chunk receive callback */
   nghttp2_session_callbacks_set_on_data_chunk_recv_callback(cbs.get(),
-    [](nghttp2_session */*session*/, std::uint8_t flags,
+    [](nghttp2_session * /*session*/, std::uint8_t flags,
        std::int32_t stream_id, const std::uint8_t *data, std::size_t len,
        void *user_data) -> int
   {
@@ -125,7 +125,7 @@ Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
 
   /* Set on stream close callback */
   nghttp2_session_callbacks_set_on_stream_close_callback(cbs.get(),
-    [](nghttp2_session */*session*/, std::int32_t stream_id,
+    [](nghttp2_session * /*session*/, std::int32_t stream_id,
        std::uint32_t error_code, void *user_data) -> int
   {
     return static_cast<Session *>(user_data)->onStreamClose(stream_id,

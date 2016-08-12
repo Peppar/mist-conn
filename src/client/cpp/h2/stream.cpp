@@ -245,9 +245,10 @@ ClientStream::submit(std::string method,
     request().setOnRead(std::move(cb));
     prd.source.ptr = this;
     prd.read_callback =
-      [](nghttp2_session */*session*/, std::int32_t stream_id, std::uint8_t *data,
-         std::size_t length, std::uint32_t *flags, nghttp2_data_source *source,
-         void *userp) -> ssize_t {
+      [](nghttp2_session * /*session*/, std::int32_t stream_id,
+         std::uint8_t *data, std::size_t length, std::uint32_t *flags,
+         nghttp2_data_source *source, void *userp) -> ssize_t
+      {
         ClientStream &strm = *static_cast<ClientStream *>(source->ptr);
         return strm.request().onRead(data, length, flags);
       };
@@ -320,9 +321,10 @@ ServerStream::submit(std::uint16_t statusCode,
     response().setOnRead(std::move(cb));
     prd.source.ptr = this;
     prd.read_callback =
-      [](nghttp2_session */*session*/, std::int32_t stream_id, std::uint8_t *data,
-         std::size_t length, std::uint32_t *flags, nghttp2_data_source *source,
-         void *userp) -> ssize_t {
+      [](nghttp2_session * /*session*/, std::int32_t stream_id,
+         std::uint8_t *data, std::size_t length, std::uint32_t *flags,
+         nghttp2_data_source *source, void *userp) -> ssize_t
+      {
         ServerStream &strm = *static_cast<ServerStream *>(source->ptr);
         return strm.response().onRead(data, length, flags);
       };

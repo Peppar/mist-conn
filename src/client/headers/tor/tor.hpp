@@ -35,7 +35,6 @@ private:
   boost::optional<std::string> _onionAddress;
 
   boost::optional<const std::string &> tryGetOnionAddress();
-  c_unique_ptr<PRFileDesc> _outLogFile;
   
 public:
 
@@ -62,9 +61,12 @@ private:
 
   c_unique_ptr<PRProcess> _torProcess;
 
+  c_unique_ptr<PRFileDesc> _outLogFile;
+
 public:
 
-  TorController(io::IOContext &ioCtx, std::string execName, std::string workingDir);
+  TorController(io::IOContext &ioCtx, std::string execName,
+                std::string workingDir);
 
   void start(boost::system::error_code &ec, std::uint16_t socksPort,
              std::uint16_t ctrlPort);

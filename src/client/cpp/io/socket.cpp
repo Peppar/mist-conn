@@ -353,7 +353,7 @@ Socket::signal()
 IOContext &
 Socket::ioCtx()
 {
-  _ioCtx;
+  return _ioCtx;
 }
 
 } // namespace io

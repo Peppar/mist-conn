@@ -178,7 +178,7 @@ SSLSocket::authenticate(CERTCertificate *cert)
 SSLContext &
 SSLSocket::sslCtx()
 {
-  _sslCtx;
+  return _sslCtx;
 }
 
 bool 

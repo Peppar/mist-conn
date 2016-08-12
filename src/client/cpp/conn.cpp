@@ -785,13 +785,15 @@ main(int argc, char **argv)
 {
   //nss_init("db");
   try {
-    assert(argc == 3);
+    assert(argc == 5);
     bool isServer = atoi(argv[1]);
     char *nickname = argv[2];
+    std::string rootDir(argv[3]);
+    std::string torPath(argv[4]);
     
     mist::io::IOContext ioCtx;
-    mist::io::SSLContext sslCtx(ioCtx, "/home/mist/key_db", nickname);
-    mist::ConnectContext ctx(sslCtx, "/home/mist/peers");
+    mist::io::SSLContext sslCtx(ioCtx, rootDir + "/key_db", nickname);
+    mist::ConnectContext ctx(sslCtx, rootDir + "/peers");
     
     ioCtx.queueJob([]() {
       while (1) {
@@ -805,7 +807,7 @@ main(int argc, char **argv)
       isServer ? 9148 : 9149, // Tor incoming port
       isServer ? 9158 : 9159, // Tor outgoing port
       isServer ? 9190 : 9191, // Control port
-      "/usr/bin/tor", "/home/mist/tordir");
+      torPath, rootDir + "/tordir");
     ctx.onionAddress(
       [](const std::string &addr)
     {

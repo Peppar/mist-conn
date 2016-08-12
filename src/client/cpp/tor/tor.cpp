@@ -14,6 +14,7 @@
 #include <prproces.h>
 
 #include "error/nss.hpp"
+#include "io/file_descriptor.hpp"
 #include "io/ssl_context.hpp"
 #include "memory/nss.hpp"
 #include "tor/tor.hpp"
@@ -23,7 +24,7 @@ namespace mist
 namespace tor
 {
   
-class TorPrinter : FileDescriptor
+class TorPrinter : public io::FileDescriptor
 {
 private:
 
@@ -36,7 +37,7 @@ private:
 public:
   
   TorPrinter(c_unique_ptr<PRFileDesc> fd)
-    : _fd(fd), nread(0) {}
+    : _fd(std::move(fd)), _nread(0) {}
 
   /* FileDescriptor interface implementation */
   virtual PRFileDesc *fileDesc() override
@@ -52,14 +53,15 @@ public:
   virtual void process(PRInt16 inFlags, PRInt16 outFlags) override
   {
     if (outFlags & PR_POLL_READ) {
-      auto n = PR_Read(fileDesc(), _buffer.data() + nread, _buffer.size() - nread);
+      auto n = PR_Read(fileDesc(), _buffer.data() + _nread,
+                       _buffer.size() - _nread);
       if (n < 0)
         BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
           "Unable to read from tor log file"));
       if (n == 0)
         BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
           "Tor log file EOF encountered"));
-      nread += n;
+      _nread += n;
       //if (nread 
     }
   }
@@ -151,7 +153,8 @@ TorHiddenService::onionAddress(onion_address_callback cb)
 TorController::TorController(io::IOContext &ioCtx, std::string execName,
                              std::string workingDir)
   : _ioCtx(ioCtx), _execName(execName), _workingDir(workingDir),
-    _torProcess(to_unique<PRProcess>())
+    _torProcess(to_unique<PRProcess>()),
+    _outLogFile(to_unique<PRFileDesc>())
   {}
 
 void
@@ -247,9 +250,9 @@ TorController::start(boost::system::error_code &ec, std::uint16_t socksPort,
   auto attr = to_unique(PR_NewProcessAttr());
   {
     PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardOutput,
-                                   _outLogFile.get();
+                                   _outLogFile.get());
     PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardError,
-                                   _outLogFile.get();
+                                   _outLogFile.get());
     PR_ProcessAttrSetCurrentDirectory(attr.get(), _workingDir.c_str());
   }
 

@@ -2,6 +2,7 @@
 #define __MIST_HEADERS_IO_SOCKET_HPP__
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <iostream>
 #include <string>
