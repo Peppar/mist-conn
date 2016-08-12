@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <functional>
 #include <map>
-#include <utility>
+//#include <utility>
 
 #include <boost/system/error_code.hpp>
 
@@ -40,7 +40,7 @@ using server_session_callback = std::function<void(ServerSession&)>;
 using server_response_callback = std::function<void(ServerResponse&)>;
 using server_request_callback = std::function<void(ServerRequest&)>;
 
-}
-}
+} // namespace h2
+} // namespace mist
 
 #endif

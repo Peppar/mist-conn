@@ -178,7 +178,7 @@ public:
   
 };
 
-}
-}
+} // namespace h2
+} // namespace mist
 
 #endif

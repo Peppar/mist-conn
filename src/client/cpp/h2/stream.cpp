@@ -410,5 +410,5 @@ ServerStream::onStreamClose(std::uint32_t errorCode)
   return 0;
 }
 
-}
-}
+} // namespace h2
+} // namespace mist

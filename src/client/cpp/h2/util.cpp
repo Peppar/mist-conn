@@ -75,5 +75,5 @@ makeHeaderNv(const header_map &headers)
   return std::move(nvs);
 }
 
-}
-}
+} // namespace h2
+} // namespace mist

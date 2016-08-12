@@ -121,6 +121,16 @@ struct c_deleter<PRProcessAttr>
 };
 
 template<>
+struct c_deleter<PRThreadPool>
+{
+  using type = void(*)(PRThreadPool*);
+  static void del(PRThreadPool *ptr)
+  {
+    PR_ShutdownThreadPool(ptr);
+  }
+};
+
+template<>
 struct c_deleter<PK11Context>
 {
   using type = void(*)(PK11Context*);
