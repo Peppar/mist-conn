@@ -37,5 +37,5 @@ ServerRequest::onData(const std::uint8_t *data, std::size_t length)
     _onData(data, length);
 }
 
-}
-}
+} // namespace h2
+} // namespace mist

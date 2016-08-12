@@ -1,15 +1,12 @@
-#ifndef __MIST_CONN_HPP__
-#define __MIST_CONN_HPP__
+#ifndef __MIST_HEADERS_CONN_HPP__
+#define __MIST_HEADERS_CONN_HPP__
 
 #include <cstddef>
 #include <functional>
-#include <iostream>
 
-#include <boost/exception/diagnostic_information.hpp> 
 #include <boost/optional.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
-#include <boost/utility/string_ref.hpp> 
 #include <boost/variant.hpp>
  
 #include "error/mist.hpp"
@@ -17,10 +14,6 @@
 #include "error/nss.hpp"
 #include "memory/nghttp2.hpp"
 #include "memory/nss.hpp"
-
-#include "context.hpp"
-#include "socket.hpp"
-#include "conn.hpp"
 
 #include "tor/tor.hpp"
 
@@ -31,11 +24,9 @@
 #include "h2/server_request.hpp"
 #include "h2/server_response.hpp"
 
-#include <iostream>
-#include <functional>
-
-#include "context.hpp"
-#include "socket.hpp"
+#include "io/io_context.hpp"
+#include "io/ssl_context.hpp"
+#include "io/ssl_socket.hpp"
 
 namespace mist
 {
@@ -115,9 +106,9 @@ private:
 
   std::shared_ptr<h2::Session> _session;
 
-  void torConnection(Socket &socket);
+  void torConnection(std::shared_ptr<io::SSLSocket> socket);
   
-  void directConnection(Socket &socket);
+  void directConnection(std::shared_ptr<io::SSLSocket> socket);
 
   void connect();
 
@@ -165,24 +156,23 @@ public:
 private:
 
   friend class PeerConnection;
-  
+
   /* SSL context */
-  SSLContext sslCtx;
+  io::SSLContext &_sslCtx;
   
   /* Tor controller */
-  std::unique_ptr<tor::TorController> torCtrl;
+  std::unique_ptr<tor::TorController> _torCtrl;
   
   /* Test peer database */
-  PeerDb peerDb;
-  
-  /* Peers in memory */
-  std::list<Peer> peers;
+  PeerDb _peerDb;
 
   /* Peer to PeerConnection map */
-  std::map<Peer*, std::unique_ptr<PeerConnection>> peerConnections;
+  std::map<Peer*, std::unique_ptr<PeerConnection>> _peerConnections;
 
   /* Outgoing connection Tor port (SOCKS5) */
   boost::optional<std::uint16_t> _torOutgoingPort;
+  
+  boost::optional<tor::TorHiddenService&> _torHiddenService;
 
   peer_connection_callback _connectionCb;
   
@@ -196,19 +186,21 @@ protected:
 
   boost::optional<Peer&> findPeerByCert(CERTCertificate *cert);
 
-  void handshakePeer(Socket &sock, boost::optional<Peer&> knownPeer,
+  void handshakePeer(io::SSLSocket &sock, boost::optional<Peer&> knownPeer,
                      handshake_peer_callback cb);
 
-  void incomingDirectConnection(Socket &sock);
+  void incomingDirectConnection(std::shared_ptr<io::SSLSocket> socket);
   
-  void incomingTorConnection(Socket &sock);
+  void incomingTorConnection(std::shared_ptr<io::SSLSocket> socket);
 
 public:
 
-  ConnectContext(std::string dbdir,
-                 std::string nickname,
-                 std::string peerdir);
+  ConnectContext(io::SSLContext &sslCtx, std::string peerdir);
 
+  io::IOContext &ioCtx();
+
+  io::SSLContext &sslCtx();
+  
   boost::optional<Peer&> findPeerByName(const std::string &nickname);
 
   void connectPeer(Peer &peer, PRNetAddr *addr, handshake_peer_callback cb);
@@ -221,6 +213,8 @@ public:
                      std::string executableName,
                      std::string workingDir);
 
+  void onionAddress(std::function<void(const std::string&)> cb);
+  
   /* Returns the existing connection for the peer, or creates a new one */
   PeerConnection &peerConnection(Peer &peer);
 
@@ -234,6 +228,6 @@ public:
 
 };
 
-}
+} // namespace mist
 
 #endif

@@ -1,5 +1,5 @@
-#ifndef __MEMORY_BASE_H__
-#define __MEMORY_BASE_H__
+#ifndef __MIST_HEADERS_MEMORY_BASE_HPP__
+#define __MIST_HEADERS_MEMORY_BASE_HPP__
 
 #include <memory>
 

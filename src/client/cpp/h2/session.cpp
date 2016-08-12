@@ -5,7 +5,7 @@
 #include <boost/system/system_error.hpp>
 #include <boost/throw_exception.hpp>
 
-#include "socket.hpp"
+#include "io/ssl_socket.hpp"
 
 #include "error/nghttp2.hpp"
 #include "error/mist.hpp"
@@ -44,9 +44,9 @@ std::string frameName(std::uint8_t type)
 /*
  * Session
  */
-Session::Session(Socket &sock, bool isServer)
-  : sock(sock),
-    h2session(to_unique<nghttp2_session>()),
+Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
+  : _socket(std::move(socket)),
+    _h2session(to_unique<nghttp2_session>()),
     _sending(false),
     _stopped(false),
     _insideCallback(false)
@@ -146,7 +146,7 @@ Session::Session(Socket &sock, bool isServer)
         make_nghttp2_error(static_cast<nghttp2_error>(rv)),
         "Unable to create nghttp2 session"));
     }
-    h2session = to_unique(sessPtr);
+    _h2session = to_unique(sessPtr);
   }
   
   /* Send connection settings */
@@ -154,7 +154,7 @@ Session::Session(Socket &sock, bool isServer)
     std::vector<nghttp2_settings_entry> iv{
       {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100},
     };
-    auto rv = nghttp2_submit_settings(h2session.get(), NGHTTP2_FLAG_NONE,
+    auto rv = nghttp2_submit_settings(_h2session.get(), NGHTTP2_FLAG_NONE,
                                       iv.data(), iv.size());
     if (rv) {
       BOOST_THROW_EXCEPTION(boost::system::system_error(
@@ -196,7 +196,7 @@ Session::readCallback(const std::uint8_t *data, std::size_t length,
   
   {
     FrameGuard guard(_insideCallback);
-    auto nrecvd = nghttp2_session_mem_recv(h2session.get(), data, length);
+    auto nrecvd = nghttp2_session_mem_recv(_h2session.get(), data, length);
     if (nrecvd < 0) {
       error(make_nghttp2_error(static_cast<nghttp2_error>(nrecvd)));
     } else if (nrecvd != length) {
@@ -215,7 +215,7 @@ Session::start()
   /* Bind the socket read callback */
   {
     using namespace std::placeholders;
-    sock.read(std::bind(&Session::readCallback, this, _1, _2, _3));
+    _socket->read(std::bind(&Session::readCallback, this, _1, _2, _3));
   }
   
   /* Write the first data */
@@ -225,7 +225,7 @@ Session::start()
 nghttp2_session *
 Session::nghttp2Session()
 {
-  return h2session.get();
+  return _h2session.get();
 }
 
 bool
@@ -237,8 +237,8 @@ Session::isStopped() const
 bool
 Session::alive() const
 {
-  return nghttp2_session_want_read(h2session.get())
-      || nghttp2_session_want_write(h2session.get())
+  return nghttp2_session_want_read(_h2session.get())
+      || nghttp2_session_want_write(_h2session.get())
       || _sending;
 }
 
@@ -263,7 +263,7 @@ Session::stop()
     return;
   
   _stopped = true;
-  sock.close();
+  _socket->close();
 }
 
 void
@@ -272,7 +272,7 @@ Session::shutdown()
   if (_stopped)
     return;
 
-  nghttp2_session_terminate_session(h2session.get(), NGHTTP2_NO_ERROR);
+  nghttp2_session_terminate_session(_h2session.get(), NGHTTP2_NO_ERROR);
   write();
 }
 
@@ -293,7 +293,7 @@ Session::write()
   {
     FrameGuard guard(_insideCallback);
     
-    auto nsend = nghttp2_session_mem_send(h2session.get(), &data);
+    auto nsend = nghttp2_session_mem_send(_h2session.get(), &data);
 
     if (nsend < 0) {
       /* Error */
@@ -308,7 +308,7 @@ Session::write()
     }
   }
   
-  sock.write(data, length,
+  _socket->write(data, length,
     [=] // , anchor(shared_from_this())
     (std::size_t nsent, boost::system::error_code ec)
   {
@@ -326,8 +326,8 @@ Session::write()
  * ClientSession
  */
 
-ClientSession::ClientSession(Socket &sock)
-  : Session(sock, false)
+ClientSession::ClientSession(std::shared_ptr<io::SSLSocket> socket)
+  : Session(std::move(socket), false)
 {
   start();
 }
@@ -434,8 +434,8 @@ ClientSession::onStreamClose(std::int32_t stream_id, std::uint32_t error_code)
 /*
  * ServerSession
  */
-ServerSession::ServerSession(Socket &sock)
-  : Session(sock, true)
+ServerSession::ServerSession(std::shared_ptr<io::SSLSocket> socket)
+  : Session(std::move(socket), true)
 {
   start();
 }
@@ -524,5 +524,5 @@ ServerSession::onStreamClose(std::int32_t stream_id, std::uint32_t error_code)
   return stream->onStreamClose(error_code);
 }
 
-}
-}
+} // namespace h2
+} // namespace mist

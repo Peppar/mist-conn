@@ -1,6 +1,9 @@
 #ifndef __MIST_HEADERS_H2_UTIL_HPP__
 #define __MIST_HEADERS_H2_UTIL_HPP__
 
+#include <cstddef>
+#include <functional>
+#include <map>
 #include <string>
 #include <type_traits>
 
@@ -59,7 +62,7 @@ parseDecimal(const std::string &value) {
 
 std::vector<nghttp2_nv> makeHeaderNv(const header_map &headers);
 
-}
-}
+} // namespace h2
+} // namespace mist
 
 #endif

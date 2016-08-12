@@ -1,5 +1,5 @@
-#ifndef __MIST_TOR_TOR_HPP__
-#define __MIST_TOR_TOR_HPP__
+#ifndef __MIST_HEADERS_TOR_TOR_HPP__
+#define __MIST_HEADERS_TOR_TOR_HPP__
 
 #include <cstddef>
 #include <functional>
@@ -10,6 +10,8 @@
 #include <boost/system/error_code.hpp>
 
 #include "memory/nss.hpp"
+
+#include "io/io_context.hpp"
 
 namespace mist
 {
@@ -25,7 +27,7 @@ class TorHiddenService
 {
 private:
 
-  SSLContext &_ctx;
+  io::IOContext &_ioCtx;
   TorController &_ctrl;
   
   std::uint16_t _port;
@@ -33,12 +35,13 @@ private:
   boost::optional<std::string> _onionAddress;
 
   boost::optional<const std::string &> tryGetOnionAddress();
+  c_unique_ptr<PRFileDesc> _outLogFile;
   
 public:
 
   using onion_address_callback = std::function<void(const std::string&)>;
 
-  TorHiddenService(SSLContext &ctx, TorController &ctrl,
+  TorHiddenService(io::IOContext &ioCtx, TorController &ctrl,
                    std::uint16_t port, std::string path);
 
   std::uint16_t port() const;
@@ -51,7 +54,7 @@ class TorController
 {
 private:
 
-  SSLContext &_ctx;
+  io::IOContext &_ioCtx;
   std::string _execName;
   std::string _workingDir;
 
@@ -61,7 +64,7 @@ private:
 
 public:
 
-  TorController(SSLContext &ctx, std::string execName, std::string workingDir);
+  TorController(io::IOContext &ioCtx, std::string execName, std::string workingDir);
 
   void start(boost::system::error_code &ec, std::uint16_t socksPort,
              std::uint16_t ctrlPort);

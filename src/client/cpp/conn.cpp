@@ -15,8 +15,9 @@
 #include "memory/nghttp2.hpp"
 #include "memory/nss.hpp"
 
-#include "context.hpp"
-#include "socket.hpp"
+#include "io/ssl_context.hpp"
+#include "io/ssl_socket.hpp"
+
 #include "conn.hpp"
 
 #include "tor/tor.hpp"
@@ -28,23 +29,16 @@
 #include "h2/server_request.hpp"
 #include "h2/server_response.hpp"
 
+#include <base64.h>
+#include <nss.h>
+#include <secerr.h>
 #include <sechash.h>
 #include <secitem.h>
-//#include <secmod.h>
-//#include <secmodt.h>
-//#include <secoid.h>
-//#include <secport.h>
 
-//#include <certdb.h>
-//#include <cert.h>
-//#include <certt.h>
-
-//#include <keyhi.h>
-//#include <pk11priv.h>
-#include <pk11func.h>
+#include <cert.h>
+#include <pk11priv.h>
 #include <pk11pub.h>
-//#include <secutil.h>
-//#include <pkcs11t.h>
+#include <prthread.h>
 
 namespace mist
 {
@@ -318,19 +312,21 @@ PeerConnection::~PeerConnection()
 }
   
 void
-PeerConnection::torConnection(Socket &socket)
+PeerConnection::torConnection(std::shared_ptr<io::SSLSocket> socket)
 {
 }
   
 void
-PeerConnection::directConnection(Socket &socket)
+PeerConnection::directConnection(std::shared_ptr<io::SSLSocket> socket)
 {
-  auto sessionId = to_unique(SSL_GetSessionID(socket.fileDesc()));
+  auto sessionId = to_unique(SSL_GetSessionID(socket->fileDesc()));
   std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
   if (_state != State::DirectConnecting) {
     /* We do not expect a direct connection here... */
   }
-  auto session = std::make_unique<h2::ServerSession>(socket);
+  
+  /* Move the socket to a new ServerSession */
+  auto session = std::make_unique<h2::ServerSession>(std::move(socket));
   h2::ServerSession &sessionR = *session;
   _session = std::move(session);
   context().onSession(sessionR);
@@ -362,29 +358,200 @@ PeerConnection::peer()
 /*
  * ConnectContext
  */
-ConnectContext::ConnectContext(std::string dbdir,
-                               std::string nickname,
-                               std::string peerdir)
-  : sslCtx(std::move(dbdir), std::move(nickname)),
-    peerDb(std::move(peerdir))
+
+namespace
 {
+
+// std::string generateRandomId(std::size_t numDwords)
+// {
+  // std::vector<std::uint32_t> out(numDwords);
+  // boost::random::random_device rng;
+  // rng.generate(out.begin(), out.end());
+  // return std::string(reinterpret_cast<const char *>(out.data()),
+                     // 4 * out.size());
+// }
+
+using socks_callback
+  = std::function<void(std::string, boost::system::error_code)>;
+
+/* Try to perform a SOCKS5 handshake to connect to the given
+   domain name and port. */
+void
+handshakeSOCKS5(mist::io::Socket &sock,
+                std::string hostname, std::uint16_t port,
+                socks_callback cb)
+{
+  std::array<std::uint8_t, 4> socksReq;
+  socksReq[0] = 5; /* Version */
+  socksReq[1] = 1;
+  socksReq[2] = 0;
+  socksReq[3] = 2;
+
+  sock.write(socksReq.data(), socksReq.size());
+
+  sock.readOnce(2,
+    [=, &sock, cb(std::move(cb))]
+    (const std::uint8_t *data, std::size_t length,
+     boost::system::error_code ec) mutable
+  {
+    if (ec) {
+      cb("", ec);
+      return;
+    }
+    if (length != 2 || data[0] != 5 || data[1] != 0) {
+      cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
+      return;
+    }
+    
+    /* Construct the SOCKS5 connect request */
+    std::vector<std::uint8_t> connReq(5 + hostname.length() + 2);
+    {
+      auto outIt = connReq.begin();
+      *(outIt++) = 5; /* Version */
+      *(outIt++) = 1; /* Connect */
+      *(outIt++) = 0; /* Must be zero */
+      *(outIt++) = 3; /* Resolve domain name */
+      *(outIt++) = static_cast<std::uint8_t>(hostname.length()); /* Domain name length */
+      outIt = std::copy(hostname.begin(), hostname.end(), outIt); /* Domain name */
+      *(outIt++) = static_cast<std::uint8_t>((port >> 8) & 0xff); /* Port MSB */
+      *(outIt++) = static_cast<std::uint8_t>(port & 0xff); /* Port LSB */
+      /* Make sure that we can count */
+      assert (outIt == connReq.end());
+    }
+    
+    sock.write(connReq.data(), connReq.size());
+    
+    /* Read 5 bytes; these are all the bytes we need to determine the
+       final packet size */
+    sock.readOnce(5,
+      [=, &sock, cb(std::move(cb))]
+      (const std::uint8_t *data, std::size_t length, boost::system::error_code ec) mutable
+    {
+      if (ec) {
+        cb("", ec);
+        return;
+      }
+      if (length != 5 || data[0] != 5 || data[1] != 0) {
+        cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
+        return;
+      }
+      
+      std::uint8_t type = data[3];
+      std::uint8_t firstByte = data[4];
+      
+      std::size_t complLength;
+      if (type == 1)
+        complLength = 10 - 5;
+      else if (type == 3)
+        complLength = 7 + firstByte - 5;
+      else if (type == 4)
+        complLength = 22 - 5;
+      else {
+        cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
+        return;
+      }
+      
+      sock.readOnce(complLength,
+        [=, &sock, cb(std::move(cb))]
+        (const std::uint8_t *data, std::size_t length,
+         boost::system::error_code ec) mutable
+      {
+        if (ec) {
+          cb("", ec);
+          return;
+        }
+        if (complLength != length) {
+          cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
+          return;
+        }
+        
+        std::string address;
+        if (type == 1)
+          address = std::to_string(firstByte) + '.'
+            + std::to_string(data[0]) + '.'
+            + std::to_string(data[1]) + '.'
+            + std::to_string(data[2]) + ':'
+            + std::to_string((data[3] << 8) | data[4]);
+        else if (type == 3)
+          address = std::string(reinterpret_cast<const char*>(data),
+                                firstByte) + ':'
+            + std::to_string((data[firstByte] << 8) | data[firstByte + 1]);
+        else if (type == 4)
+          address = to_hex(firstByte) + to_hex(data[0]) + ':'
+            + to_hex(data[1]) + to_hex(data[2]) + ':'
+            + to_hex(data[3]) + to_hex(data[4]) + ':'
+            + to_hex(data[5]) + to_hex(data[6]) + ':'
+            + to_hex(data[7]) + to_hex(data[8]) + ':'
+            + to_hex(data[9]) + to_hex(data[10]) + ':'
+            + to_hex(data[11]) + to_hex(data[12]) + ':'
+            + to_hex(data[13]) + to_hex(data[14]) + ':'
+            + std::to_string((data[15] << 8) | data[16]);
+        assert (address.length());
+        cb(address, boost::system::error_code());
+      });
+    });
+  });
+}
+
+/* Connect the socket through a local Tor SOCKS5 proxy. */
+void
+connectTor(mist::io::Socket &sock, std::uint16_t torPort,
+           std::string hostname, std::uint16_t port,
+           socks_callback cb)
+{
+  /* Initialize addr to localhost:torPort */
+  PRNetAddr addr;
+  if (PR_InitializeNetAddr(PR_IpAddrLoopback, torPort, &addr) != PR_SUCCESS) {
+    cb("", mist::make_nss_error());
+    return;
+  }
+
+  sock.connect(&addr,
+    [=, &sock, cb(std::move(cb))]
+    (boost::system::error_code ec) mutable
+  {
+    if (ec) {
+      cb("", ec);
+      return;
+    }
+    handshakeSOCKS5(sock, std::move(hostname), port, std::move(cb));
+  });
+}
+
+} // namespace
+
+ConnectContext::ConnectContext(io::SSLContext &sslCtx,
+                               std::string peerdir)
+  : _sslCtx(sslCtx), _peerDb(std::move(peerdir))
+  {}
+
+io::IOContext &
+ConnectContext::ioCtx()
+{
+  return sslCtx().ioCtx();
+}
+
+io::SSLContext &
+ConnectContext::sslCtx()
+{
+  return _sslCtx;
 }
 
 boost::optional<Peer&> 
 ConnectContext::findPeerByName(const std::string &nickname)
 {
-  return peerDb.findByNickname(nickname);
+  return _peerDb.findByNickname(nickname);
 }
 
 boost::optional<Peer&> 
 ConnectContext::findPeerByCert(CERTCertificate *cert)
 {
   auto pubKey = to_unique(CERT_ExtractPublicKey(cert));
-  return peerDb.findByKey(pubKey.get());
+  return _peerDb.findByKey(pubKey.get());
 }
 
 void 
-ConnectContext::handshakePeer(Socket &sock,
+ConnectContext::handshakePeer(io::SSLSocket &socket,
                               boost::optional<Peer&> knownPeer,
                               handshake_peer_callback cb)
 {
@@ -392,9 +559,10 @@ ConnectContext::handshakePeer(Socket &sock,
   std::shared_ptr<boost::optional<Peer&>>
     peerRef(new boost::optional<Peer&>());
   
-  sock.handshake(
+  socket.handshake(
     /* Handshake done */
-    [=](boost::system::error_code ec)
+    [this, peerRef, cb(std::move(cb))]
+    (boost::system::error_code ec)
   {
     if (!ec && *peerRef)
       cb(peerConnection(**peerRef));
@@ -402,7 +570,8 @@ ConnectContext::handshakePeer(Socket &sock,
       cb(ec);
   },
     /* Authenticate peer */
-    [=](CERTCertificate *cert) -> bool
+    [this, peerRef, knownPeer]
+    (CERTCertificate *cert)
   {
     auto peer = findPeerByCert(cert);
     if (!knownPeer || &*knownPeer == &*peer) {
@@ -417,53 +586,55 @@ void
 ConnectContext::connectPeer(Peer &peer, PRNetAddr *addr,
                             handshake_peer_callback cb)
 {
-  Socket &sock = sslCtx.openClientSocket();
-  sock.connect(addr,
-    [this, &peer, &sock, cb(std::move(cb))](boost::system::error_code ec)
+  std::shared_ptr<io::SSLSocket> socket = _sslCtx.openClientSocket();
+  socket->connect(addr,
+    [this, &peer, socket, cb(std::move(cb))]
+    (boost::system::error_code ec)
   {
     if (ec) {
       cb(ec);
     } else {
-      handshakePeer(sock, peer, std::move(cb));
+      handshakePeer(*socket, peer, std::move(cb));
     }
   });
 }
 
 void 
-ConnectContext::incomingDirectConnection(Socket &sock)
+ConnectContext::incomingDirectConnection(std::shared_ptr<io::SSLSocket> socket)
 {
   std::cerr << "New direct connection!" << std::endl;
   
-  handshakePeer(sock, boost::none,
-    [&sock](boost::variant<PeerConnection&, boost::system::error_code> v)
+  handshakePeer(*socket, boost::none,
+    [socket]
+    (boost::variant<PeerConnection&, boost::system::error_code> v)
   {
     if (v.which() == 0) {
       auto peerConn = boost::get<PeerConnection&>(v);
       
-      peerConn.directConnection(sock);
+      peerConn.directConnection(std::move(socket));
     
     } else {
       /* Handshake error, we cannot accept this connection */
       
       auto ec = boost::get<boost::system::error_code>(v);
       std::cerr << "Handshake error : " << ec.message() <<std::endl;
-      return;
     }
   });
 }
   
 void 
-ConnectContext::incomingTorConnection(Socket &sock)
+ConnectContext::incomingTorConnection(std::shared_ptr<io::SSLSocket> socket)
 {
   std::cerr << "New Tor connection!" << std::endl;
   
-  handshakePeer(sock, boost::none,
-    [&sock](boost::variant<PeerConnection&, boost::system::error_code> v)
+  handshakePeer(*socket, boost::none,
+    [socket]
+    (boost::variant<PeerConnection&, boost::system::error_code> v)
   {
     if (v.which() == 0) {
       auto peerConn = boost::get<PeerConnection&>(v);
       
-      peerConn.torConnection(sock);
+      peerConn.torConnection(socket);
     
     } else {
       /* Handshake error, we cannot accept this connection */
@@ -501,7 +672,7 @@ ConnectContext::serveDirect(std::uint16_t listenDirectPort)
   /* Serve the direct connection port */
   {
     using namespace std::placeholders;
-    sslCtx.serve(listenDirectPort,
+    sslCtx().serve(listenDirectPort,
       std::bind(&ConnectContext::incomingDirectConnection, this, _1));
   }
 }
@@ -516,16 +687,17 @@ ConnectContext::startServeTor(std::uint16_t torIncomingPort,
   /* Serve the Tor connection port */
   {
     using namespace std::placeholders;
-    sslCtx.serve(torIncomingPort,
+    sslCtx().serve(torIncomingPort,
       std::bind(&ConnectContext::incomingTorConnection, this, _1));
   }
 
   /* Start Tor */
   {
     boost::system::error_code ec;
-    torCtrl = std::make_unique<tor::TorController>(sslCtx, executableName, workingDir);
-    torCtrl->addHiddenService(torIncomingPort, "mist-service");
-    torCtrl->start(ec, torOutgoingPort, controlPort);
+    _torCtrl = std::make_unique<tor::TorController>(ioCtx(), executableName, workingDir);
+    _torHiddenService
+      = _torCtrl->addHiddenService(torIncomingPort, "mist-service");
+    _torCtrl->start(ec, torOutgoingPort, controlPort);
     if (ec)
       BOOST_THROW_EXCEPTION(boost::system::system_error(ec,
         "Unable to start Tor controller"));
@@ -533,18 +705,24 @@ ConnectContext::startServeTor(std::uint16_t torIncomingPort,
 
   _torOutgoingPort = torOutgoingPort;
 }
-  
+
+void
+ConnectContext::onionAddress(std::function<void(const std::string&)> cb)
+{
+  _torHiddenService->onionAddress(std::move(cb));
+}
+
 /* Returns the existing connection for the peer, or creates a new one */
 PeerConnection &
 ConnectContext::peerConnection(Peer &peer)
 {
-  auto it = peerConnections.find(&peer);
+  auto it = _peerConnections.find(&peer);
   
-  if (it != peerConnections.end()) {
+  if (it != _peerConnections.end()) {
     return *it->second;
   } else {
     auto connection = std::make_unique<PeerConnection>(*this, peer);
-    auto rv = peerConnections.insert(std::make_pair(&peer, std::move(connection)));
+    auto rv = _peerConnections.insert(std::make_pair(&peer, std::move(connection)));
     return *(rv.first->second);
   }
 }
@@ -571,13 +749,14 @@ ConnectContext::onSession(h2::ServerSession &session)
 void 
 ConnectContext::exec()
 {
-  sslCtx.exec();
+  ioCtx().exec();
 }
 
-}
+} // namespace mist
 
 namespace
 {
+
 mist::h2::generator_callback
 make_generator(std::string body)
 {
@@ -598,7 +777,8 @@ make_generator(std::string body)
     }
   };
 }
-}
+
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -609,18 +789,28 @@ main(int argc, char **argv)
     bool isServer = atoi(argv[1]);
     char *nickname = argv[2];
     
-    mist::ConnectContext ctx("/home/mist/key_db",
-      nickname,
-      "/home/mist/peers");
+    mist::io::IOContext ioCtx;
+    mist::io::SSLContext sslCtx(ioCtx, "/home/mist/key_db", nickname);
+    mist::ConnectContext ctx(sslCtx, "/home/mist/peers");
     
+    ioCtx.queueJob([]() {
+      while (1) {
+        std::cerr << "I am job number one!" << std::endl;
+        PR_Sleep(PR_MillisecondsToInterval(1000));
+      }
+    });
     ctx.serveDirect(
       isServer ? 9150 : 9151); // Direct incoming port
     ctx.startServeTor(
       isServer ? 9148 : 9149, // Tor incoming port
       isServer ? 9158 : 9159, // Tor outgoing port
       isServer ? 9190 : 9191, // Control port
-      "tor", "/home/mist/tordir");
-    
+      "/usr/bin/tor", "/home/mist/tordir");
+    ctx.onionAddress(
+      [](const std::string &addr)
+    {
+      std::cerr << "Onion address is " << addr << std::endl;
+    });
     ctx.setOnSession(
       [=](mist::h2::ServerSession &session)
     {

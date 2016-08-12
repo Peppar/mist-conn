@@ -826,7 +826,7 @@ class nss_error_category : public boost::system::error_category
   }
 } instance;
 
-}
+} // namespace
 
 const boost::system::error_category &nss_category() noexcept
 {
@@ -843,4 +843,4 @@ boost::system::error_code make_nss_error()
   return boost::system::error_code(PR_GetError(), nss_category());
 }
 
-}
+} // namespace mist

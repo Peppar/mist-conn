@@ -14,15 +14,14 @@
 #include "error/nghttp2.hpp"
 #include "error/mist.hpp"
 
+#include "io/ssl_socket.hpp"
+
 #include "memory/nghttp2.hpp"
 
 #include "h2/types.hpp"
 
 namespace mist
 {
-
-class Socket;
-
 namespace h2
 {
 
@@ -47,10 +46,10 @@ private:
   Session &operator=(Session &) = delete;
   
   /* nghttp2 session struct */
-  c_unique_ptr<nghttp2_session> h2session;
+  c_unique_ptr<nghttp2_session> _h2session;
   
   /* Underlying TLS socket */
-  Socket &sock;
+  std::shared_ptr<io::SSLSocket> _socket;
   
   /* Map of all streams in the session */
   using stream_map = std::map<std::int32_t, std::unique_ptr<Stream>>;
@@ -66,15 +65,15 @@ private:
    * not re-trigger a write */
   bool _insideCallback;
 
+  error_callback _onError;
+
   /* Called by the socket when data has been read; forwards to nghttp2 */
   void readCallback(const std::uint8_t *data, std::size_t length,
                     boost::system::error_code ec);
 
-  error_callback _onError;
-
 protected:
 
-  Session(Socket &sock, bool isServer);
+  Session(std::shared_ptr<io::SSLSocket> socket, bool isServer);
   
   virtual ~Session();
 
@@ -179,7 +178,7 @@ protected:
 
 public:
 
-  ClientSession(Socket &sock);
+  ClientSession(std::shared_ptr<io::SSLSocket> socket);
   
   boost::optional<ClientRequest&>
   submit(boost::system::error_code &ec,
@@ -226,13 +225,13 @@ protected:
 
 public:
 
-  ServerSession(Socket &sock);
+  ServerSession(std::shared_ptr<io::SSLSocket> socket);
 
   void setOnRequest(server_request_callback cb);
 
 };
 
-}
-}
+} // namespace h2
+} // namespace mist
 
 #endif
