@@ -1,0 +1,25 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <LocalDebuggerEnvironment>PATH=%PATH%;$(NSS_ROOT)\dist\WIN954.0_64_DBG.OBJ\lib;$(NGHTTP2_ROOT)\lib\MSVC_obj
+$(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <LocalDebuggerCommandArguments>0 mist_root "C:\Users\Oskar\Documents\mist-share\mist-conn\root" "C:\Users\Oskar\Documents\mist-share\mist-conn\root\batchstart.cmd"</LocalDebuggerCommandArguments>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LocalDebuggerEnvironment>PATH=%PATH%;$(NSS_ROOT)\dist\WIN954.0_64_DBG.OBJ\lib;$(NGHTTP2_ROOT)\lib\MSVC_obj
+$(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <LocalDebuggerCommandArguments>0 mist_root "C:\Users\Oskar\Documents\mist-share\mist-conn\root" "C:\Users\Oskar\Documents\mist-share\mist-conn\root\batchstart.cmd"</LocalDebuggerCommandArguments>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <LocalDebuggerEnvironment>PATH=%PATH%;$(NSS_ROOT)\dist\WIN954.0_64_DBG.OBJ\lib;$(NGHTTP2_ROOT)\lib\MSVC_obj</LocalDebuggerEnvironment>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <LocalDebuggerCommandArguments>0 mist_root "C:\Users\Oskar\Documents\mist-share\mist-conn\root" "C:\Users\Oskar\Documents\mist-share\mist-conn\root\batchstart.cmd"</LocalDebuggerCommandArguments>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LocalDebuggerEnvironment>PATH=%PATH%;$(NSS_ROOT)\dist\WIN954.0_64_DBG.OBJ\lib;$(NGHTTP2_ROOT)\lib\MSVC_obj</LocalDebuggerEnvironment>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <LocalDebuggerCommandArguments>0 mist_root "C:\Users\Oskar\Documents\mist-share\mist-conn\root" "C:\Users\Oskar\Documents\mist-share\mist-conn\root\batchstart.cmd"</LocalDebuggerCommandArguments>
+  </PropertyGroup>
+</Project>

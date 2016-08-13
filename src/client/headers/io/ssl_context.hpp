@@ -64,8 +64,7 @@ private:
   SECStatus authCertificate(SSLSocket &socket, PRBool checkSig, PRBool isServer);
 
   /* Called when NSS wants us to supply a password */
-  boost::optional<std::string> getPassword(SSLSocket &socket, PK11SlotInfo *info,
-                                           PRBool retry);
+  boost::optional<std::string> getPassword(PK11SlotInfo *info, PRBool retry);
 
 public:
 

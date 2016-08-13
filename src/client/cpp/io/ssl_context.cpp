@@ -147,6 +147,7 @@ getAuthData(const std::string &nickname, void *wincx)
       SEC_CERT_NICKNAMES_USER, wincx));
       
     if (names) {
+	
       for (std::size_t i = 0; i < names->numnicknames; ++i) {
         auto cert = to_unique(CERT_FindUserCertByUsage(
           CERT_GetDefaultCertDB(), names->nicknames[i], certUsageSSLClient,
@@ -243,9 +244,8 @@ SSLContext::initializeNSS(const std::string &dbdir)
     [](PK11SlotInfo *info, PRBool retry, void *arg)
     -> char *
   {
-    SSLSocket &socket = *static_cast<SSLSocket *>(arg);
-    boost::optional<std::string> password
-      = socket.sslCtx().getPassword(socket, info, retry);
+    SSLContext &sslCtx = *static_cast<SSLContext *>(arg);
+    boost::optional<std::string> password = sslCtx.getPassword(info, retry);
     if (password) {
       /* Use PL_strdup; NSS will try to free the pointer later. */
       return PL_strdup(password->c_str());
@@ -274,6 +274,11 @@ SSLContext::initializeSecurity(c_unique_ptr<PRFileDesc> &fd)
   if (SSL_OptionSet(fd.get(), SSL_SECURITY, PR_TRUE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to modify SSL_SECURITY setting"));
+
+  /* Set the PK11 user data to this ssl context */
+  if (SSL_SetPKCS11PinArg(fd.get(), this) != SECSuccess)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to set PKCS11 Pin Arg"));
 }
 
 /* Called when NSS wants to get the client certificate */
@@ -318,7 +323,7 @@ SSLContext::authCertificate(SSLSocket &socket, PRBool checkSig,
 
 /* Called when NSS wants us to supply a password */
 boost::optional<std::string>
-SSLContext::getPassword(SSLSocket &socket, PK11SlotInfo *info, PRBool retry)
+SSLContext::getPassword(PK11SlotInfo *info, PRBool retry)
 {
   /* Use PL_strdup; NSS will try to free the pointer later. */
   std::cerr << "password func" << std::endl;
@@ -363,11 +368,6 @@ SSLContext::initializeTLS(SSLSocket &sock)
 {
   PRFileDesc *sslfd = sock.fileDesc();
 
-  /* Set the PK11 user data to the socket pointer */
-  if (SSL_SetPKCS11PinArg(sslfd, &sock) != SECSuccess)
-    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      "Unable to set PKCS11 Pin Arg"));
-  
   /* Server requests certificate from client */
   if (SSL_OptionSet(sslfd, SSL_REQUEST_CERTIFICATE, PR_TRUE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
@@ -379,9 +379,10 @@ SSLContext::initializeTLS(SSLSocket &sock)
       "Unable to modify SSL_REQUIRE_CERTIFICATE option"));
   
   /* Disable SSLv2 */
-  if (SSL_OptionSet(sslfd, SSL_ENABLE_SSL2, PR_FALSE) != SECSuccess)
-    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      "Unable to modify SSL_ENABLE_SSL2 option"));
+  /* This doesn't work in windows... why? */
+  //if (SSL_OptionSet(sslfd, SSL_ENABLE_SSL2, PR_FALSE) != SECSuccess)
+  //  BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+  //    "Unable to modify SSL_ENABLE_SSL2 option"));
       
   /* Disable SSLv3 */
   if (SSL_OptionSet(sslfd, SSL_ENABLE_SSL3, PR_FALSE) != SECSuccess)

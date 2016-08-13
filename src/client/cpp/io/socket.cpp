@@ -140,8 +140,9 @@ Socket::connect(PRNetAddr *addr, connect_callback cb)
   } else {
     _state = State::Open;
     if (_c.cb) {
-      _c.cb(boost::system::error_code());
-      _c.cb = nullptr;
+      /* Move the callback as a new one can be set by the time it returns */
+      auto cb = std::move(_c.cb);
+      cb(boost::system::error_code());
     }
   }
   
@@ -165,8 +166,9 @@ Socket::connectContinue(PRInt16 out_flags)
   } else {
     _state = State::Open;
     if (_c.cb) {
-      _c.cb(boost::system::error_code());
-      _c.cb = nullptr;
+      /* Move the callback as a new one can be set by the time it returns */
+      auto cb = std::move(_c.cb);
+      cb(boost::system::error_code());
     }
   }
 }
@@ -239,9 +241,10 @@ Socket::readReady()
       if (_r.nread == _r.length) {
         /* We have read all requested data */
         _r.state = Read::State::Off;
-        _r.cb(_r.buffer.data(), _r.length, boost::system::error_code());
-        _r.cb = nullptr;
-        return;
+
+        /* Move the callback as a new one can be set by the time it returns */
+        std::move(_r.cb)(_r.buffer.data(),
+          _r.length, boost::system::error_code());
       }
     } else {
       assert (_r.state == Read::State::Continuous);
@@ -296,8 +299,9 @@ Socket::writeReady()
       _w.state = Write::State::Off;
       /* Nothing more to write; notify callback */
       if (_w.cb) {
-        _w.cb(_w.nwritten, boost::system::error_code());
-        _w.cb = nullptr;
+        /* Move the callback as a new one can be set by the time it returns */
+        auto cb = std::move(_w.cb);
+        cb(_w.nwritten, boost::system::error_code());
       }
     }
   }
@@ -310,8 +314,8 @@ Socket::close(boost::system::error_code ec)
   if (!ec)
     ec = make_nss_error(PR_CONNECT_RESET_ERROR);
   if (_state == State::Connecting && _c.cb) {
-    _c.cb(ec);
-    _c.cb = nullptr;
+    std::move(_c.cb)(ec);
+    //_c.cb = nullptr;
   }
   if (_r.state != Read::State::Off && _r.cb) {
     _r.cb(_r.buffer.data(), _r.length, ec);

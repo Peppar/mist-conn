@@ -146,6 +146,11 @@ IOContext::ioStep(unsigned int maxTimeout)
     }
   }
 
+  {
+    auto time = PR_IntervalToMilliseconds(timeoutInterval);
+    std::cerr << "Timeout interval is " << time << " ms" << std::endl;
+  }
+
   /* Poll */
   bool pdsValid = true;
   {

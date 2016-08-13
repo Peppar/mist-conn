@@ -2,7 +2,8 @@
 #include <functional>
 #include <iostream>
 
-#include <boost/exception/diagnostic_information.hpp> 
+#include <boost/exception/diagnostic_information.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/optional.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
@@ -212,6 +213,30 @@ Peer::cert() const
   return _cert.get();
 }
 
+void
+Peer::setOnionAddress(std::string onionAddress)
+{
+  _onionAddress = onionAddress;
+}
+
+const boost::optional<std::string> &
+Peer::onionAddress() const
+{
+  return _onionAddress;
+}
+
+void
+Peer::setOnionPort(std::uint16_t onionPort)
+{
+  _onionPort = onionPort;
+}
+
+const boost::optional<std::uint16_t> &
+Peer::onionPort() const
+{
+  return _onionPort;
+}
+
 /*
  * PeerDb
  */
@@ -381,11 +406,10 @@ handshakeSOCKS5(mist::io::Socket &sock,
                 std::string hostname, std::uint16_t port,
                 socks_callback cb)
 {
-  std::array<std::uint8_t, 4> socksReq;
+  std::array<std::uint8_t, 3> socksReq;
   socksReq[0] = 5; /* Version */
   socksReq[1] = 1;
   socksReq[2] = 0;
-  socksReq[3] = 2;
 
   sock.write(socksReq.data(), socksReq.size());
 
@@ -431,11 +455,12 @@ handshakeSOCKS5(mist::io::Socket &sock,
         cb("", ec);
         return;
       }
-      if (length != 5 || data[0] != 5 || data[1] != 0) {
+      if (length != 5 || data[0] != 5) {
         cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
         return;
       }
       
+      bool success = data[1] == 0;
       std::uint8_t type = data[3];
       std::uint8_t firstByte = data[4];
       
@@ -487,7 +512,11 @@ handshakeSOCKS5(mist::io::Socket &sock,
             + to_hex(data[13]) + to_hex(data[14]) + ':'
             + std::to_string((data[15] << 8) | data[16]);
         assert (address.length());
-        cb(address, boost::system::error_code());
+        if (!success) {
+          cb(address, mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
+        } else {
+          cb(address, boost::system::error_code());
+        }
       });
     });
   });
@@ -574,7 +603,7 @@ ConnectContext::handshakePeer(io::SSLSocket &socket,
     (CERTCertificate *cert)
   {
     auto peer = findPeerByCert(cert);
-    if (!knownPeer || &*knownPeer == &*peer) {
+    if (peer && (!knownPeer || &*knownPeer == &*peer)) {
       *peerRef = peer;
       return true;
     }
@@ -582,21 +611,58 @@ ConnectContext::handshakePeer(io::SSLSocket &socket,
   });
 }
 
-void 
-ConnectContext::connectPeer(Peer &peer, PRNetAddr *addr,
-                            handshake_peer_callback cb)
+void
+ConnectContext::connectPeerDirect(Peer &peer, PRNetAddr *addr,
+  handshake_peer_callback cb)
 {
   std::shared_ptr<io::SSLSocket> socket = _sslCtx.openClientSocket();
   socket->connect(addr,
+    [this, &peer, socket, cb(std::move(cb))]
+  (boost::system::error_code ec)
+  {
+    if (ec) {
+      cb(ec);
+    }
+    else {
+      handshakePeer(*socket, peer, std::move(cb));
+    }
+  });
+}
+
+void
+ConnectContext::connectPeerTor(Peer &peer, handshake_peer_callback cb)
+{
+  std::shared_ptr<io::SSLSocket> socket = _sslCtx.openClientSocket();
+  connectTor(*socket, *_torOutgoingPort, *peer.onionAddress(), *peer.onionPort(),
+    [this, &peer, socket, cb(std::move(cb))]
+    (std::string connectedAddress, boost::system::error_code ec)
+  {
+    if (ec) {
+      std::cerr << ec.message() << " while connecting to " << connectedAddress << std::endl;
+      cb(ec);
+    } else {
+      std::cerr << "Connected to " << connectedAddress << std::endl;
+      handshakePeer(*socket, peer, std::move(cb));
+    }
+  });
+
+/*
+  PRNetAddr addr;
+  if (PR_InitializeNetAddr(PR_IpAddrLoopback, *_torOutgoingPort, &addr)
+      != PR_SUCCESS)
+    throw new std::runtime_error("PR_InitializeNetAddr failed");
+
+  socket->connect(&addr,
     [this, &peer, socket, cb(std::move(cb))]
     (boost::system::error_code ec)
   {
     if (ec) {
       cb(ec);
     } else {
-      handshakePeer(*socket, peer, std::move(cb));
+      
+      handshakeSOCKS5(*socket, *peer.onionAddress(), *peer.onionPort()
     }
-  });
+  });*/
 }
 
 void 
@@ -707,6 +773,12 @@ ConnectContext::startServeTor(std::uint16_t torIncomingPort,
 }
 
 void
+ConnectContext::externalTor(std::uint16_t torOutgoingPort)
+{
+  _torOutgoingPort = torOutgoingPort;
+}
+
+void
 ConnectContext::onionAddress(std::function<void(const std::string&)> cb)
 {
   _torHiddenService->onionAddress(std::move(cb));
@@ -784,35 +856,36 @@ int
 main(int argc, char **argv)
 {
   //nss_init("db");
-  try {
+  //try {
     assert(argc == 5);
-    bool isServer = atoi(argv[1]);
+    bool isServer = static_cast<bool>(atoi(argv[1]));
     char *nickname = argv[2];
-    std::string rootDir(argv[3]);
-    std::string torPath(argv[4]);
+    boost::filesystem::path rootDir(argv[3]);
+    boost::filesystem::path torPath(argv[4]);
     
     mist::io::IOContext ioCtx;
-    mist::io::SSLContext sslCtx(ioCtx, rootDir + "/key_db", nickname);
-    mist::ConnectContext ctx(sslCtx, rootDir + "/peers");
+    mist::io::SSLContext sslCtx(ioCtx, (rootDir / "key_db").string(), nickname);
+    mist::ConnectContext ctx(sslCtx, (rootDir / "/peers").string());
     
-    ioCtx.queueJob([]() {
+    /*ioCtx.queueJob([]() {
       while (1) {
         std::cerr << "I am job number one!" << std::endl;
         PR_Sleep(PR_MillisecondsToInterval(1000));
       }
-    });
+    });*/
     ctx.serveDirect(
-      isServer ? 9150 : 9151); // Direct incoming port
+      isServer ? 9150 : 7151); // Direct incoming port
     ctx.startServeTor(
-      isServer ? 9148 : 9149, // Tor incoming port
-      isServer ? 9158 : 9159, // Tor outgoing port
-      isServer ? 9190 : 9191, // Control port
-      torPath, rootDir + "/tordir");
-    ctx.onionAddress(
+      isServer ? 9148 : 7199, // Tor incoming port
+      isServer ? 9158 : 7200, // Tor outgoing port
+      isServer ? 9190 : 7201, // Control port
+      torPath.string(), (rootDir / "tordir").string());
+    //ctx.externalTor(isServer ? 9158 : 7159);
+    /*ctx.onionAddress(
       [](const std::string &addr)
     {
       std::cerr << "Onion address is " << addr << std::endl;
-    });
+    });*/
     ctx.setOnSession(
       [=](mist::h2::ServerSession &session)
     {
@@ -873,72 +946,79 @@ main(int argc, char **argv)
       //  &addr) != PR_SUCCESS)
       //  throw new std::runtime_error("PR_InitializeNetAddr failed");
       //addr.inet.port = PR_htons(443);
-      if (PR_InitializeNetAddr(PR_IpAddrLoopback, 9150, &addr) != PR_SUCCESS)
-        throw new std::runtime_error("PR_InitializeNetAddr failed");
+      //if (PR_InitializeNetAddr(PR_IpAddrLoopback, 9150, &addr) != PR_SUCCESS)
+      //  throw new std::runtime_error("PR_InitializeNetAddr failed");
     
       //mist::Socket &sock = sslCtx.openClientSocket();
-      std::cerr << "Trying to connect..." << std::endl;
       
-      mist::Peer &peer = *ctx.findPeerByName("myself");
-      
-      ctx.connectPeer(peer, &addr,
-        [&ctx](boost::variant<mist::PeerConnection&, boost::system::error_code> result)
+      ioCtx.setTimeout(20000,
+        [&ctx]()
       {
-        if (result.which() == 0) {
-          auto peerConn = boost::get<mist::PeerConnection&>(result);
-          std::cerr << "Connection successful!" << std::endl;
-          // session.setOnError(
+        std::cerr << "Trying to connect..." << std::endl;
+        mist::Peer &peer = *ctx.findPeerByName("myself");
+        //peer.setOnionAddress("4svkdgkyr5oqxeck.onion");
+        peer.setOnionAddress("www.google.com");
+        peer.setOnionPort(443);
+        ctx.connectPeerTor(peer,
+          [&ctx](boost::variant<mist::PeerConnection&, boost::system::error_code> result)
+        {
+          if (result.which() == 0) {
+            auto peerConn = boost::get<mist::PeerConnection&>(result);
+            std::cerr << "Connection successful!" << std::endl;
+            // session.setOnError(
             // [&session](boost::system::error_code ec)
-          // {
+            // {
             // std::cerr << "Session error!!" << ec.message() << std::endl;
-          // });
-          
-          // boost::system::error_code ec;
-          // mist::h2::header_map headers
-          // {
+            // });
+
+            // boost::system::error_code ec;
+            // mist::h2::header_map headers
+            // {
             // {"accept", {"*/*", false}},
             // {"accept-encoding", {"gzip, deflate", false}},
             // {"user-agent", {"nghttp2/" NGHTTP2_VERSION, false}},
-          // };
-          // auto req = session.submit(ec, "GET", "/", "https", "www.hej.os",
-                                    // headers);
-          // if (ec)
+            // };
+            // auto req = session.submit(ec, "GET", "/", "https", "www.hej.os",
+            // headers);
+            // if (ec)
             // std::cerr << ec.message() << std::endl;
-          // if (!req) {
+            // if (!req) {
             // std::cerr << "Could not submit" << std::endl;
             // return;
-          // }
-          // std::cerr << "Submitted" << std::endl;
-          
-          // mist::h2::ClientRequest &request = req.get();
-          
-          // request.stream().setOnClose(
+            // }
+            // std::cerr << "Submitted" << std::endl;
+
+            // mist::h2::ClientRequest &request = req.get();
+
+            // request.stream().setOnClose(
             // [](boost::system::error_code ec)
-          // {
+            // {
             // std::cerr << "Client stream closed! " << ec.message() << std::endl;
-          // });
-          
-          // request.setOnResponse(
+            // });
+
+            // request.setOnResponse(
             // [&request, &session]
             // (mist::h2::ClientResponse &response)
-          // {
-            // std::cerr << "Got response!" << std::endl;
-            
-            // response.setOnData(
-              // [&response, &session]
-              // (const std::uint8_t *data, std::size_t length)
             // {
-              // for (auto &kv : response.headers()) {
-                // std::cerr << kv.first << ", " << kv.second.first << std::endl;
-              // }
-              // std::cerr << "Got data of length " << length << std::endl;
-              // std::cerr << std::string(reinterpret_cast<const char*>(data), length) << std::endl;
+            // std::cerr << "Got response!" << std::endl;
+
+            // response.setOnData(
+            // [&response, &session]
+            // (const std::uint8_t *data, std::size_t length)
+            // {
+            // for (auto &kv : response.headers()) {
+            // std::cerr << kv.first << ", " << kv.second.first << std::endl;
+            // }
+            // std::cerr << "Got data of length " << length << std::endl;
+            // std::cerr << std::string(reinterpret_cast<const char*>(data), length) << std::endl;
             // });
-          // });
-        } else {
-          auto ec = boost::get<boost::system::error_code>(result);
-          std::cerr << "Error when connecting" << std::endl;
-        }
+            // });
+          }
+          else {
+            auto ec = boost::get<boost::system::error_code>(result);
+            std::cerr << "Error when connecting " << ec.message() << std::endl;
+          }
+        });
       });
     }
 
@@ -952,9 +1032,9 @@ main(int argc, char **argv)
       // std::cerr << "Client" << std::endl;
       // client(nickname);
     // }
-  } catch(boost::exception &e) {
-    std::cerr
-      << "Unexpected exception, diagnostic information follows:" << std::endl
-      << boost::current_exception_diagnostic_information();
-  }
+  //} catch(boost::exception &) {
+  //  std::cerr
+  //    << "Unexpected exception, diagnostic information follows:" << std::endl
+  //    << boost::current_exception_diagnostic_information();
+  //}
 }

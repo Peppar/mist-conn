@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <list>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,41 @@ class SSLContext;
 
 namespace tor
 {
+
+class ProcessArguments
+{
+private:
+
+  std::list<std::string> _data;
+  std::vector<char *> _argv;
+  std::vector<char *> _envp;
+
+public:
+
+  void addArgument(std::string arg)
+  {
+    _data.push_back(std::move(arg));
+    _argv.push_back(const_cast<char*>((--_data.end())->c_str()));
+  }
+
+  void addEnvironment(std::string env)
+  {
+    _data.push_back(std::move(env));
+    _envp.push_back(const_cast<char*>((--_data.end())->c_str()));
+  }
+
+  char *const *argv()
+  {
+    _argv.push_back(nullptr);
+    return _argv.data();
+  }
+
+  char *const *envp()
+  {
+    _envp.push_back(nullptr);
+    return _envp.data();
+  }
+};
 
 class TorController;
 
@@ -59,6 +95,7 @@ private:
 
   std::list<TorHiddenService> _hiddenServices;
 
+  ProcessArguments _processArgs;
   c_unique_ptr<PRProcess> _torProcess;
 
   c_unique_ptr<PRFileDesc> _outLogFile;

@@ -1,0 +1,177 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Header Files\io">
+      <UniqueIdentifier>{903907ea-6984-4e26-8cf9-7b3580426bfe}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\h2">
+      <UniqueIdentifier>{88c64372-9a2b-484a-a1cc-7e45d722e29b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\tor">
+      <UniqueIdentifier>{9b9269a9-1c21-4a8c-8fa2-25435780bd8c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\memory">
+      <UniqueIdentifier>{91e9901c-06e4-4c90-906c-ce87227ae0c9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\error">
+      <UniqueIdentifier>{9ac7da05-3039-4bf9-a373-66a9d9f7df2d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\io">
+      <UniqueIdentifier>{d5bbadb1-528f-4f55-a982-d6e4180a6e44}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\tor">
+      <UniqueIdentifier>{8a9c71b1-6f1b-4b66-a67a-68649434bcfd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\error">
+      <UniqueIdentifier>{3e55438c-71df-4bf5-9685-30dd820a3171}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\h2">
+      <UniqueIdentifier>{90e45648-77df-465a-97b2-cab88639bc51}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\client\cpp\io\rdv_socket.cpp">
+      <Filter>Source Files\io</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\io\socket.cpp">
+      <Filter>Source Files\io</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\io\ssl_context.cpp">
+      <Filter>Source Files\io</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\io\ssl_socket.cpp">
+      <Filter>Source Files\io</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\io\file_descriptor.cpp">
+      <Filter>Source Files\io</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\io\io_context.cpp">
+      <Filter>Source Files\io</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\tor\tor.cpp">
+      <Filter>Source Files\tor</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\error\nghttp2.cpp">
+      <Filter>Source Files\error</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\error\nss.cpp">
+      <Filter>Source Files\error</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\error\mist.cpp">
+      <Filter>Source Files\error</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\conn.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\h2\lane.cpp">
+      <Filter>Source Files\h2</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\h2\server_request.cpp">
+      <Filter>Source Files\h2</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\h2\server_response.cpp">
+      <Filter>Source Files\h2</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\h2\session.cpp">
+      <Filter>Source Files\h2</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\h2\stream.cpp">
+      <Filter>Source Files\h2</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\h2\util.cpp">
+      <Filter>Source Files\h2</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\h2\client_request.cpp">
+      <Filter>Source Files\h2</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\h2\client_response.cpp">
+      <Filter>Source Files\h2</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\client\headers\conn.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\io\io_context.hpp">
+      <Filter>Header Files\io</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\io\rdv_socket.hpp">
+      <Filter>Header Files\io</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\io\socket.hpp">
+      <Filter>Header Files\io</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\io\ssl_context.hpp">
+      <Filter>Header Files\io</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\io\ssl_socket.hpp">
+      <Filter>Header Files\io</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\io\file.hpp">
+      <Filter>Header Files\io</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\io\file_descriptor.hpp">
+      <Filter>Header Files\io</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\h2\server_response.hpp">
+      <Filter>Header Files\h2</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\h2\session.hpp">
+      <Filter>Header Files\h2</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\h2\stream.hpp">
+      <Filter>Header Files\h2</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\h2\types.hpp">
+      <Filter>Header Files\h2</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\h2\util.hpp">
+      <Filter>Header Files\h2</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\h2\client_request.hpp">
+      <Filter>Header Files\h2</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\h2\client_response.hpp">
+      <Filter>Header Files\h2</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\h2\lane.hpp">
+      <Filter>Header Files\h2</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\h2\server_request.hpp">
+      <Filter>Header Files\h2</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\tor\tor.hpp">
+      <Filter>Header Files\tor</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\memory\nghttp2.hpp">
+      <Filter>Header Files\memory</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\memory\nss.hpp">
+      <Filter>Header Files\memory</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\memory\base.hpp">
+      <Filter>Header Files\memory</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\error\nghttp2.hpp">
+      <Filter>Header Files\error</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\error\nss.hpp">
+      <Filter>Header Files\error</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\error\mist.hpp">
+      <Filter>Header Files\error</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>

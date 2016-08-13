@@ -37,11 +37,19 @@ private:
 
   std::string _nickname;
   c_unique_ptr<CERTCertificate> _cert;
+  boost::optional<std::string> _onionAddress;
+  boost::optional<std::uint16_t> _onionPort;
 
 public:
 
   const std::string nickname() const;
   const CERTCertificate *cert() const;
+
+  void setOnionAddress(std::string onionAddress);
+  const boost::optional<std::string> &onionAddress() const;
+
+  void setOnionPort(std::uint16_t onionPort);
+  const boost::optional<std::uint16_t> &onionPort() const;
   
   Peer(std::string nickname, c_unique_ptr<CERTCertificate> cert);
 
@@ -203,7 +211,10 @@ public:
   
   boost::optional<Peer&> findPeerByName(const std::string &nickname);
 
-  void connectPeer(Peer &peer, PRNetAddr *addr, handshake_peer_callback cb);
+  void connectPeerDirect(Peer &peer, PRNetAddr *addr,
+    handshake_peer_callback cb);
+
+  void connectPeerTor(Peer &peer, handshake_peer_callback cb);
 
   void serveDirect(std::uint16_t directIncomingPort);
 
@@ -212,6 +223,8 @@ public:
                      std::uint16_t controlPort,
                      std::string executableName,
                      std::string workingDir);
+
+  void externalTor(std::uint16_t torOutgoingPort);
 
   void onionAddress(std::function<void(const std::string&)> cb);
   

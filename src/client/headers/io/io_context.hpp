@@ -39,7 +39,7 @@ private:
 
   c_unique_ptr<PRThreadPool> _threadPool;
 
-  const std::size_t initialThreadCount = 16;
+  const std::size_t initialThreadCount = 4;
   const std::size_t maxThreadCount = 192;
 
 public:

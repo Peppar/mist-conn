@@ -6,6 +6,7 @@
 
 #include <iostream>
 
+#include <boost/filesystem.hpp>
 #include <boost/optional.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
@@ -142,7 +143,7 @@ TorHiddenService::onionAddress(onion_address_callback cb)
   if (addr) {
     cb(*addr);
   } else {
-    _ioCtx.setTimeout(100, std::bind(&TorHiddenService::onionAddress, this,
+    _ioCtx.setTimeout(1000, std::bind(&TorHiddenService::onionAddress, this,
                                      std::move(cb)));
   }
 }
@@ -163,43 +164,46 @@ TorController::start(boost::system::error_code &ec, std::uint16_t socksPort,
 {
   ec.clear();
   
+  /* TODO: Clean this up */
+  boost::filesystem::path workingDir(_workingDir);
+
   /* Construct the contents of the torrc file */
   std::string torrcContents;
   {
-    std::string torDataDir = _workingDir + "/tordata";
+    boost::filesystem::path torDataDir(workingDir / "tordata");
     std::ostringstream buf;
-    buf << "SocksPort " << socksPort << '\n';
-    //buf << "ControlPort " << ctrlPort << '\n';
-    buf << "DataDirectory " << torDataDir << '\n';
-    // of << "HashedControlPassword " << hashedCtrlPassword << '\n';
+    buf << "SocksPort " << socksPort << std::endl;
+    //buf << "ControlPort " << ctrlPort << std::endl;
+    buf << "DataDirectory " << torDataDir.string() << std::endl;
+    // of << "HashedControlPassword " << hashedCtrlPassword << std::endl;
     
     // /* Bridge configuration */
     // if (bridges.size()) {
-      // of << "UseBridges 1" << '\n';
+      // of << "UseBridges 1" << std::endl;
       // for (auto &bridge : bridges) {
-        // os << bridge << '\n';
+        // os << bridge << std::endl;
       // }
     // }
     
     for (auto &hiddenService : _hiddenServices) {
-      buf << "HiddenServiceDir " << hiddenService.path() << '\n';
-      buf << "HiddenServicePort " << hiddenService.port() << '\n';
+      buf << "HiddenServiceDir " << hiddenService.path() << std::endl;
+      buf << "HiddenServicePort 443"
+        << " localhost:" << hiddenService.port() << std::endl;
     }
     
     torrcContents = buf.str();
   }
   
   /* Write contents to the torrc file */
-  std::string torrcPath = _workingDir + "/torrc";
+  boost::filesystem::path torrcPath(workingDir / "torrc");
   {
-    auto rcFile = to_unique(PR_Open(torrcPath.c_str(),
+    auto rcFile = to_unique(PR_Open(torrcPath.string().c_str(),
                                     PR_WRONLY|PR_CREATE_FILE|PR_TRUNCATE,
                                     PR_IRWXU));
-    if (!rcFile) {
-      ec = make_nss_error();
-      return;
-    }
-    
+    if (!rcFile)
+      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+        "Unable to open torrc file for reading"));
+
     std::size_t nwritten = 0;
     while (1) {
       auto n = PR_Write(rcFile.get(), torrcContents.data() + nwritten,
@@ -220,47 +224,39 @@ TorController::start(boost::system::error_code &ec, std::uint16_t socksPort,
   }
   
   /* Open a file containing the process output */
-  std::string logPath = _workingDir + "/out.log";
+  boost::filesystem::path logPath(workingDir / "out.log");
   {
-    _outLogFile = to_unique(PR_Open(torrcPath.c_str(),
-                                  PR_WRONLY|PR_CREATE_FILE|PR_TRUNCATE|PR_SYNC,
-                                  PR_IRWXU));
-    if (!_outLogFile)      
+    _outLogFile = to_unique(PR_Open(logPath.string().c_str(),
+      PR_WRONLY|PR_CREATE_FILE|PR_TRUNCATE|PR_SYNC, PR_IRWXU));
+    if (!_outLogFile)
       BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
         "Unable to open output log file"));
-  }
 
-  /* Create the process arguments vector */  
-  std::vector<char*> argv;
-  {
-    /* TODO */
-    argv.push_back(PL_strdup(_execName.c_str()));
-    argv.push_back(PL_strdup("-f"));
-    argv.push_back(PL_strdup(torrcPath.c_str()));
-    argv.push_back(nullptr);
-  }
-
-  /* Create the process environment variables vector */
-  std::vector<char*> envp;
-  {
-    envp.push_back(nullptr);
+    std::string header(std::string("*** Tor log file ***\r\n"));
+    PR_Write(_outLogFile.get(), header.data(), header.length());
   }
 
   /* Process attributes */
   auto attr = to_unique(PR_NewProcessAttr());
   {
     PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardOutput,
-                                   _outLogFile.get());
+      PR_GetSpecialFD(PR_StandardOutput));
+                               //    _outLogFile.get());
     PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardError,
-                                   _outLogFile.get());
+      PR_GetSpecialFD(PR_StandardError));
+                              //     _outLogFile.get());
     PR_ProcessAttrSetCurrentDirectory(attr.get(), _workingDir.c_str());
   }
 
   /* Create the process */
   {
-    /* TODO */
-    _torProcess = to_unique(PR_CreateProcess(_execName.c_str(), argv.data(),
-                                             envp.data(), attr.get()));
+    /* Process arguments */
+    _processArgs.addArgument(_execName);
+    _processArgs.addArgument("-f");
+    _processArgs.addArgument(torrcPath.string().c_str());
+
+    _torProcess = to_unique(PR_CreateProcess(_execName.c_str(),
+      _processArgs.argv(), _processArgs.envp(), attr.get()));
     if (!_torProcess)
       BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
         "Unable to write to create Tor process"));
@@ -298,7 +294,9 @@ TorController::isRunning() const
 TorHiddenService &
 TorController::addHiddenService(std::uint16_t port, std::string name)
 {
-  _hiddenServices.emplace_back(_ioCtx, *this, port, _workingDir + "/" + name);
+  boost::filesystem::path workingDir(_workingDir);
+  _hiddenServices.emplace_back(_ioCtx, *this, port,
+    (workingDir / name).string());
   return *(--_hiddenServices.end());
 }
 
