@@ -387,15 +387,6 @@ PeerConnection::peer()
 namespace
 {
 
-// std::string generateRandomId(std::size_t numDwords)
-// {
-  // std::vector<std::uint32_t> out(numDwords);
-  // boost::random::random_device rng;
-  // rng.generate(out.begin(), out.end());
-  // return std::string(reinterpret_cast<const char *>(out.data()),
-                     // 4 * out.size());
-// }
-
 using socks_callback
   = std::function<void(std::string, boost::system::error_code)>;
 
@@ -760,16 +751,10 @@ ConnectContext::startServeTor(std::uint16_t torIncomingPort,
 
   /* Start Tor */
   {
-    boost::system::error_code ec;
-    _torCtrl = std::make_unique<tor::TorController>(ioCtx(), executableName, workingDir);
+    _torCtrl = std::make_shared<tor::TorController>(sslCtx(), executableName, workingDir);
     _torHiddenService
       = _torCtrl->addHiddenService(torIncomingPort, "mist-service");
-    _torCtrl->start(ec, torOutgoingPort, controlPort, [](std::int32_t exitCode) {
-      std::cerr << "Tor process exited with code " << exitCode << std::endl;
-    });
-    if (ec)
-      BOOST_THROW_EXCEPTION(boost::system::system_error(ec,
-        "Unable to start Tor controller"));
+    _torCtrl->start(torOutgoingPort, controlPort);
   }
 
   _torOutgoingPort = torOutgoingPort;
@@ -868,7 +853,7 @@ main(int argc, char **argv)
     
     mist::io::IOContext ioCtx;
     mist::io::SSLContext sslCtx(ioCtx, (rootDir / "key_db").string(), nickname);
-    mist::ConnectContext ctx(sslCtx, (rootDir / "/peers").string());
+    mist::ConnectContext ctx(sslCtx, (rootDir / "peers").string());
     
     /*ioCtx.queueJob([]() {
       while (1) {
@@ -877,11 +862,11 @@ main(int argc, char **argv)
       }
     });*/
     ctx.serveDirect(
-      isServer ? 8250 : 7283); // Direct incoming port
+      isServer ? 8250 : 7383); // Direct incoming port
     ctx.startServeTor(
-      isServer ? 8148 : 7280, // Tor incoming port
-      isServer ? 8158 : 7281, // Tor outgoing port
-      isServer ? 8190 : 7282, // Control port
+      isServer ? 8148 : 7380, // Tor incoming port
+      isServer ? 8158 : 7381, // Tor outgoing port
+      isServer ? 8190 : 7382, // Control port
       torPath.string(), 
       //"C:\\Users\\Oskar\\Desktop\\Tor\\Browser\\TorBrowser\\Tor\\tor.exe",
       //"C:\\Users\\Oskar\\Desktop\\Tor\\Browser\\TorBrowser\\Tor");

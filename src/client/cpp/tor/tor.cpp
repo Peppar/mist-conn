@@ -8,6 +8,7 @@
 
 #include <boost/filesystem.hpp>
 #include <boost/optional.hpp>
+#include <boost/random/random_device.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
 #include <boost/throw_exception.hpp>
@@ -24,63 +25,6 @@ namespace mist
 {
 namespace tor
 {
-  
-class TorPrinter : public io::FileDescriptor
-{
-private:
-
-  c_unique_ptr<PRFileDesc> _fd;
-
-  std::array<std::uint8_t, 128> _buffer;
-  
-  std::size_t _nread;
-
-public:
-  
-  TorPrinter(c_unique_ptr<PRFileDesc> fd)
-    : _fd(std::move(fd)), _nread(0) {}
-
-  /* FileDescriptor interface implementation */
-  virtual PRFileDesc *fileDesc() override
-  {
-    return _fd.get();
-  }
-  
-  virtual boost::optional<PRInt16> inFlags() const override
-  {
-    return PR_POLL_READ;
-  }
-  
-  virtual void process(PRInt16 inFlags, PRInt16 outFlags) override
-  {
-    if (outFlags & PR_POLL_READ) {
-      auto n = PR_Read(fileDesc(), _buffer.data() + _nread,
-                       _buffer.size() - _nread);
-      if (n < 0)
-        BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-          "Unable to read from tor log file"));
-      if (n == 0)
-        BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-          "Tor log file EOF encountered"));
-      _nread += n;
-      //if (nread 
-    }
-  }
-
-};
-
-// void
-// redirectProcessOutput()
-// {
-  // PRSocketOptionData sockOpt;
-  // sockOpt.option = PR_SockOpt_Nonblocking;
-  // sockOpt.value.non_blocking = PR_TRUE;
-  // if (PR_SetSocketOption(fd.get(), &sockOpt) != PR_SUCCESS)
-    // BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      // "Unable to set PR_SockOpt_Nonblocking"));
-
- 
-// }
 
 /*
  * TorHiddenService
@@ -151,192 +95,349 @@ TorHiddenService::onionAddress(onion_address_callback cb)
 /*
  * TorController
  */
-TorController::TorController(io::IOContext &ioCtx, std::string execName,
+TorController::TorController(io::SSLContext &sslCtx, std::string execName,
                              std::string workingDir)
-  : _ioCtx(ioCtx), _execName(execName), _workingDir(workingDir)
+  : _sslCtx(sslCtx), _execName(execName), _workingDir(workingDir)
   {}
 
-void
-TorController::start(boost::system::error_code &ec, std::uint16_t socksPort,
-                     std::uint16_t ctrlPort, process_exit_callback cb)
+namespace
 {
-  ec.clear();
-  
-  /* TODO: Clean this up */
-  boost::filesystem::path workingDir(_workingDir);
 
-  /* Construct the contents of the torrc file */
-  std::string torrcContents;
+std::string
+to_hex(uint8_t byte)
+{
+  static const char *digits = "0123456789abcdef";
+  std::array<char, 2> text{ digits[byte >> 4], digits[byte & 0xf] };
+  return std::string(text.begin(), text.end());
+}
+
+template<typename It>
+std::string
+to_hex(It begin, It end)
+{
+  std::string text;
+  while (begin != end)
+    text += to_hex(uint8_t(*(begin++)));
+  return text;
+}
+
+std::string
+to_hex(std::string str)
+{
+  return to_hex((uint8_t *)str.data(), (uint8_t *)(str.data() + str.size()));
+}
+
+std::string
+generateRandomId(std::size_t numDwords)
+{
+  std::vector<std::uint32_t> out(numDwords);
+  boost::random::random_device rng;
+  rng.generate(out.begin(), out.end());
+  return std::string(reinterpret_cast<const char *>(out.data()),
+    4 * out.size());
+}
+
+std::string
+generateRandomHexString(std::size_t numBytes)
+{
+  return to_hex(generateRandomId((numBytes + 3) / 4)).substr(0, 2 * numBytes);
+}
+
+using process_callback = std::function<void(std::int32_t)>;
+
+void
+runTorProcess(io::IOContext &ioCtx, std::string executable,
+  std::string workingDir, std::vector<std::string> processArgs,
+  process_callback cb)
+{
+  ioCtx.queueJob([=]() mutable
   {
-    boost::filesystem::path torDataDir(workingDir / "tordata");
-    std::ostringstream buf;
-    buf << "SocksPort " << socksPort << std::endl;
-    //buf << "ControlPort " << ctrlPort << std::endl;
-    buf << "DataDirectory " << torDataDir.string() << std::endl;
-    // of << "HashedControlPassword " << hashedCtrlPassword << std::endl;
-    
-    // /* Bridge configuration */
-    // if (bridges.size()) {
-      // of << "UseBridges 1" << std::endl;
-      // for (auto &bridge : bridges) {
-        // os << bridge << std::endl;
-      // }
-    // }
-    
-    for (auto &hiddenService : _hiddenServices) {
-      buf << "HiddenServiceDir " << hiddenService.path() << std::endl;
-      buf << "HiddenServicePort 443"
-        << " 127.0.0.1:" << hiddenService.port() << std::endl;
+#if defined(_WIN32)||defined(_WIN64)
+    /* Due to difficulties with redirecting Tor's STDOUT/STDERR on windows,
+    we need to use a launchpad command file to recover its output */
+    {
+      auto launchpadPath
+        = boost::filesystem::path(workingDir) / "launchpad.cmd";
+
+      /* Set the real executable path as first argument */
+      processArgs.insert(processArgs.begin(), executable);
+
+      executable = launchpadPath.string();
     }
-    
-    torrcContents = buf.str();
-  }
-  
-  /* Write contents to the torrc file */
-  boost::filesystem::path torrcPath(workingDir / "torrc");
-  {
-    auto rcFile = to_unique(PR_Open(torrcPath.string().c_str(),
-                                    PR_WRONLY|PR_CREATE_FILE|PR_TRUNCATE,
-                                    PR_IRWXU));
-    if (!rcFile)
-      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-        "Unable to open torrc file for reading"));
+#endif
 
-    std::size_t nwritten = 0;
-    while (1) {
-      auto n = PR_Write(rcFile.get(), torrcContents.data() + nwritten,
-                        torrcContents.length() - nwritten);
-      if (n < 0) {
-        BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-          "Unable to write to torrc file"));
-      } else {
-        nwritten += n;
-        if (nwritten == torrcContents.length())
-          break;
+    /* Convert arguments to argv format */
+    std::vector<char *> argv;
+    {
+      for (auto &arg : processArgs) {
+        argv.push_back(const_cast<char *>(arg.c_str()));
+      }
+      argv.push_back(nullptr);
+    }
+
+#if !(defined(_WIN32)||defined(_WIN64))
+    auto logFilePath
+      = boost::filesystem::path(workingDir) / "out.log";
+    {
+      _torLogFile = to_unique(PR_Open(logFilePath.string().c_str(),
+        PR_WRONLY|PR_CREATE_FILE|PR_TRUNCATE, PR_IRUSR|PR_IWUSR));
+    }
+#endif
+
+    /* Process attributes */
+    auto attr = to_unique(PR_NewProcessAttr());
+    {
+#if !(defined(_WIN32)||defined(_WIN64))
+      PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardOutput,
+        _torLogFile.get());
+      PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardError,
+        _torLogFile.get());
+#endif
+
+      PR_ProcessAttrSetCurrentDirectory(attr.get(), workingDir.c_str());
+    }
+
+    /* Create the process */
+    c_unique_ptr<PRProcess> process;
+    {
+      process = to_unique(PR_CreateProcess(executable.c_str(),
+        argv.data(), nullptr, attr.get()));
+
+      if (!process) {
+        cb(-1);
+        return;
       }
     }
-    
-    if (PR_Sync(rcFile.get()) != PR_SUCCESS)      
-      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-        "Unable to sync file"));
-  }
-  
-  /* Create the log file, read/write owner */
-  boost::filesystem::path logPath(workingDir / "out.log");
-  {
-    to_unique(PR_Open(logPath.string().c_str(),
-      PR_WRONLY|PR_CREATE_FILE|PR_TRUNCATE|PR_SYNC, PR_IRUSR| PR_IWUSR));
-    /*if (!_outLogFile)
-      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-        "Unable to open output log file"));
 
-    std::string header(std::string("*** Tor log file ***\r\n"));
-    PR_Write(_outLogFile.get(), header.data(), header.length());*/
-  }
-
-  /* Process arguments */
-  ProcessArguments processArgs;
-  {
-    processArgs.addArgument(_execName);
-    processArgs.addArgument("-f");
-    processArgs.addArgument(torrcPath.string().c_str());
-
-    /*char *path = PR_GetEnv("path");
-    if (path)
-    processArgs.addEnvironment(std::string("PATH=") + path);*/
-  }
-
-  /* Process attributes */
-  auto attr = to_unique(PR_NewProcessAttr());
-  {
-    // PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardOutput,
-    //   PR_GetSpecialFD(PR_StandardOutput));
-    //    _outLogFile.get());
-    //PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardError,
-    //  PR_GetSpecialFD(PR_StandardError));
-    //     _outLogFile.get());
-    PR_ProcessAttrSetCurrentDirectory(attr.get(), _workingDir.c_str());
-  }
-
-  /* Create the process */
-  {
-    _torProcess = to_unique(PR_CreateProcess(_execName.c_str(),
-      processArgs.argv(), nullptr, attr.get()));
-
-    if (!_torProcess)
-      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-        "Unable to write to create Tor process"));
-  }
-
-  /* Create a thread waiting for the process to terminate */
-  _ioCtx.queueJob([proc(_torProcess.get()), cb]()
-  {
     /* Wait for the process to finish */
     PRInt32 exitCode = 0xCCCCCCCC;
-    PR_WaitProcess(proc, &exitCode);
+    PR_WaitProcess(process.get(), &exitCode);
     cb(exitCode);
-  });
-
-  /* Create the log file reader thread */
-  _ioCtx.queueJob([logPath]()
-  {
-    auto logFile = to_unique(PR_Open(logPath.string().c_str(), PR_RDONLY, 0));
-    std::array<char, 80> buf;
-    std::string line;
-    const auto isCrlf = [](char c) { return c == '\n' || c == '\r'; };
-
-    while (1) {
-      auto nread = PR_Read(logFile.get(), buf.data(), buf.size());
-
-      /* Check for errors and EOF */
-      if (nread < 0) {
-        std::cerr << "Error while reading log file" << std::endl;
-        return;
-      } else if (nread == 0) {
-        std::cerr << "EOF while reading log file" << std::endl;
-        return;
-      }
-
-      assert(nread > 0);
-
-      /* Split the text into lines */
-      {
-        auto begin = buf.begin();
-        auto end = buf.begin() + nread;
-
-        while (1) {
-          auto crlfPos = std::find_if(begin, end, isCrlf);
-          line += std::string(begin, crlfPos);
-
-          /* No CR/LF found; store the text for the next read */
-          if (crlfPos == end)
-            break;
-
-          /* Non-empty line found*/
-          if (!line.empty())
-            std::cerr << "Tor said: " << line << std::endl;
-          
-          /* Start a new line */
-          line.clear();
-          begin = std::next(crlfPos);
-        }
-      }
-    }
   });
 }
 
-/*
-void
-TorController::logReader(std::string logPath)
+std::string
+readAll(PRFileDesc *fd)
 {
-  auto logFile = to_unique(PR_Open(logPath.c_str(), PR_RDONLY, 0));
-  if (!logFile)
+  std::array<char, 80> buf;
+  std::string out;
   while (1) {
-    PR_Read(logFile.get())
-    //std::cerr << "I am job number two!" << std::endl;
-    //PR_Sleep(PR_MillisecondsToInterval(800));
+    auto n = PR_Read(fd, buf.data(), buf.size());
+    if (n <= 0)
+      break;
+    out += std::string(buf.data(), buf.data() + n);
   }
-}*/
+  return out;
+}
+
+void
+writeAll(PRFileDesc *fd, std::string contents)
+{
+  std::size_t nwritten = 0;
+  while (1) {
+    auto n = PR_Write(fd, contents.data() + nwritten,
+      contents.length() - nwritten);
+    if (n < 0) {
+      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+        "Unable to write to torrc file"));
+    }
+    else {
+      nwritten += n;
+      if (nwritten == contents.length())
+        break;
+    }
+  }
+
+}
+
+bool
+isCrlf(char c)
+{
+  return c == '\n' || c == '\r';
+};
+
+} // namespace
+
+void
+TorController::start(std::uint16_t socksPort,  std::uint16_t ctrlPort)
+{
+  _socksPort = socksPort;
+  _ctrlPort = ctrlPort;
+
+  _password = generateRandomHexString(32);
+
+  boost::filesystem::path workingDir(_workingDir);
+
+  /* Launch tor to create the password hash */
+  runTorProcess(_sslCtx.ioCtx(), _execName, _workingDir, {_execName,
+    "--hash-password", _password, "--quiet"},
+    [=, anchor(shared_from_this())](std::int32_t exitCode)
+  {
+    if (exitCode) {
+      std::cerr << "Unable to launch tor to hash the password" << std::endl;
+    }
+
+    /* Read the password hash */
+    auto logPath = workingDir / "out.log";
+    std::string passwordHash;
+    {
+      auto logFile = to_unique(PR_Open(logPath.string().c_str(),
+        PR_RDONLY, 0));
+      passwordHash = readAll(logFile.get());
+
+      /* Remove CR/LF */
+      passwordHash.erase(std::remove_if(passwordHash.begin(),
+        passwordHash.end(), isCrlf), passwordHash.end());
+    }
+
+    /* Construct the contents of the torrc file */
+    std::string torrcContents;
+    {
+      auto torDataDir = workingDir / "tordata";
+      std::ostringstream buf;
+      buf << "SocksPort " << socksPort << std::endl;
+      buf << "ControlPort " << ctrlPort << std::endl;
+      buf << "DataDirectory " << torDataDir.string() << std::endl;
+      buf << "HashedControlPassword " << passwordHash << std::endl;
+
+      /* Bridge configuration */
+      if (_bridges.size()) {
+        buf << "UseBridges 1" << std::endl;
+        for (auto &bridge : _bridges) {
+          buf << "Bridge " << bridge << std::endl;
+        }
+      }
+
+      for (auto &hiddenService : _hiddenServices) {
+        buf << "HiddenServiceDir " << hiddenService.path() << std::endl;
+        buf << "HiddenServicePort 443"
+          << " 127.0.0.1:" << hiddenService.port() << std::endl;
+      }
+
+      torrcContents = buf.str();
+    }
+
+    /* Write contents to the torrc file */
+    boost::filesystem::path torrcPath(workingDir / "torrc");
+    {
+      auto rcFile = to_unique(PR_Open(torrcPath.string().c_str(),
+        PR_WRONLY|PR_CREATE_FILE|PR_TRUNCATE, PR_IRUSR|PR_IWUSR));
+      
+      if (!rcFile)
+        BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+          "Unable to open torrc file for reading"));
+
+      writeAll(rcFile.get(), torrcContents);
+      
+      if (PR_Sync(rcFile.get()) != PR_SUCCESS)
+        BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+          "Unable to sync file"));
+    }
+
+    /* Launch Tor for real this time */
+    {
+      using namespace std::placeholders;
+      runTorProcess(_sslCtx.ioCtx(), _execName, _workingDir,
+        { _execName, "-f", torrcPath.string() },
+        std::bind(&TorController::torProcessExit, this, _1));
+    }
+
+    connectControlPort();
+
+  });
+}
+
+void
+TorController::torProcessExit(std::int32_t exitCode)
+{
+  /* Close the control socket */
+  if (_ctrlSocket)
+    _ctrlSocket->close();
+
+  /* TODO: Inform about the exit */
+  std::cerr << "Tor process exited with exit code " << exitCode << std::endl;
+}
+
+void
+TorController::sendCommand(std::string cmd)
+{
+  assert(_ctrlSocket);
+
+  cmd += "\r\n";
+  _ctrlSocket->write(reinterpret_cast<const std::uint8_t*>(cmd.c_str()),
+    cmd.length(),
+    [=, anchor(shared_from_this())]
+  (std::size_t nwritten, boost::system::error_code ec)
+  {
+    if (ec) {
+      std::cerr << "Error while writing to control socket" << std::endl;
+      return;
+    }
+    std::cerr << "Wrote authenticate " << nwritten << std::endl;
+  });
+}
+
+void
+TorController::readResponse(const std::uint8_t *data, std::size_t length,
+  boost::system::error_code ec)
+{
+  auto begin = data;
+  auto end = data + length;
+  
+  while (1) {
+    auto crlfPos = std::find_if(begin, end, isCrlf);
+    _pendingResponse += std::string(begin, crlfPos);
+  
+    /* No CR/LF found; store the text for the next read */
+    if (crlfPos == end)
+      break;
+  
+    /* Non-empty line found*/
+    if (!_pendingResponse.empty())
+      std::cerr << "Tor said: " << _pendingResponse << std::endl;
+  
+    /* Start a new line */
+    _pendingResponse.clear();
+    begin = std::next(crlfPos);
+  }
+}
+
+void
+TorController::connectControlPort()
+{
+  _ctrlSocket = _sslCtx.openClientSocket();
+
+  /* Bind the address */
+  PRNetAddr addr;
+  {
+    PR_InitializeNetAddr(PR_IpAddrLoopback, _ctrlPort, &addr);
+  }
+
+  /* Connect */
+  _ctrlSocket->connect(&addr,
+    [=, anchor(shared_from_this())]
+    (boost::system::error_code ec)
+  {
+    std::cerr << "Trying to connect to the Tor control port" << std::endl;
+
+    /* Unable to connect; retry */
+    if (ec) {
+      _sslCtx.ioCtx().setTimeout(1000,
+        std::bind(&TorController::connectControlPort, this));
+      return;
+    }
+
+    /* Set the socket read callback */
+    {
+      using namespace std::placeholders;
+      _ctrlSocket->read(std::bind(&TorController::readResponse, this,
+        _1, _2, _3));
+    }
+    
+    /* Authenticate with our password */
+    sendCommand("AUTHENTICATE \"" + _password + "\"");
+  });
+}
 
 void
 TorController::stop()
@@ -354,7 +455,7 @@ TorHiddenService &
 TorController::addHiddenService(std::uint16_t port, std::string name)
 {
   boost::filesystem::path workingDir(_workingDir);
-  _hiddenServices.emplace_back(_ioCtx, *this, port,
+  _hiddenServices.emplace_back(_sslCtx.ioCtx(), *this, port,
     (workingDir / name).string());
   return *(--_hiddenServices.end());
 }

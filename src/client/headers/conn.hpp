@@ -169,7 +169,7 @@ private:
   io::SSLContext &_sslCtx;
   
   /* Tor controller */
-  std::unique_ptr<tor::TorController> _torCtrl;
+  std::shared_ptr<tor::TorController> _torCtrl;
   
   /* Test peer database */
   PeerDb _peerDb;

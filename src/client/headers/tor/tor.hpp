@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <functional>
 #include <list>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,41 +22,6 @@ class SSLContext;
 
 namespace tor
 {
-
-class ProcessArguments
-{
-private:
-
-  std::list<std::string> _data;
-  std::vector<char *> _argv;
-  std::vector<char *> _envp;
-
-public:
-
-  void addArgument(std::string arg)
-  {
-    _data.push_back(std::move(arg));
-    _argv.push_back(const_cast<char*>((--_data.end())->c_str()));
-  }
-
-  void addEnvironment(std::string env)
-  {
-    _data.push_back(std::move(env));
-    _envp.push_back(const_cast<char*>((--_data.end())->c_str()));
-  }
-
-  char *const *argv()
-  {
-    _argv.push_back(nullptr);
-    return _argv.data();
-  }
-
-  char *const *envp()
-  {
-    _envp.push_back(nullptr);
-    return _envp.data();
-  }
-};
 
 class TorController;
 
@@ -85,29 +51,46 @@ public:
 
 };
 
-class TorController
+class TorController : public std::enable_shared_from_this<TorController>
 {
 private:
 
-  io::IOContext &_ioCtx;
+  io::SSLContext &_sslCtx;
   std::string _execName;
   std::string _workingDir;
+  std::uint16_t _socksPort;
+  std::uint16_t _ctrlPort;
+  std::string _password;
 
   std::list<TorHiddenService> _hiddenServices;
 
   c_unique_ptr<PRProcess> _torProcess;
+#if !(defined(_WIN32)||defined(_WIN64))
+  c_unique_ptr<PRFileDesc> _torLogFile;
+#endif
 
-  c_unique_ptr<PRFileDesc> _outLogFile;
+  std::vector<std::string> _bridges;
+
+  std::string _pendingResponse;
+  std::shared_ptr<io::Socket> _ctrlSocket;
+
+  void connectControlPort();
+
+  void torProcessExit(std::int32_t exitCode);
+
+  void sendCommand(std::string cmd);
+
+  void readResponse(const std::uint8_t *data, std::size_t length,
+    boost::system::error_code ec);
 
 public:
 
-  TorController(io::IOContext &ioCtx, std::string execName,
+  TorController(io::SSLContext &sslCtx, std::string execName,
                 std::string workingDir);
 
   using process_exit_callback = std::function<void(std::int32_t exitCode)>;
 
-  void start(boost::system::error_code &ec, std::uint16_t socksPort,
-             std::uint16_t ctrlPort, process_exit_callback cb);
+  void start(std::uint16_t socksPort, std::uint16_t ctrlPort);
 
   void stop();
 
