@@ -870,7 +870,7 @@ main(int argc, char **argv)
       torPath.string(), 
       //"C:\\Users\\Oskar\\Desktop\\Tor\\Browser\\TorBrowser\\Tor\\tor.exe",
       //"C:\\Users\\Oskar\\Desktop\\Tor\\Browser\\TorBrowser\\Tor");
-      (rootDir / "tordir").string());
+      rootDir.string());
     //ctx.externalTor(isServer ? 9158 : 7159);
     ctx.onionAddress(
       [&ctx](const std::string &addr)

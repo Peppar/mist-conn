@@ -56,10 +56,12 @@ class TorController : public std::enable_shared_from_this<TorController>
 private:
 
   io::SSLContext &_sslCtx;
-  std::string _execName;
-  std::string _workingDir;
+  
   std::uint16_t _socksPort;
   std::uint16_t _ctrlPort;
+  
+  std::string _execName;
+  std::string _workingDir;
   std::string _password;
 
   std::list<TorHiddenService> _hiddenServices;
@@ -73,6 +75,9 @@ private:
 
   std::string _pendingResponse;
   std::shared_ptr<io::Socket> _ctrlSocket;
+
+  void runTorProcess(std::vector<std::string> processArgs,
+    std::function<void(std::int32_t)> cb);
 
   void connectControlPort();
 
