@@ -153,14 +153,12 @@ TorHiddenService::onionAddress(onion_address_callback cb)
  */
 TorController::TorController(io::IOContext &ioCtx, std::string execName,
                              std::string workingDir)
-  : _ioCtx(ioCtx), _execName(execName), _workingDir(workingDir),
-    _torProcess(to_unique<PRProcess>()),
-    _outLogFile(to_unique<PRFileDesc>())
+  : _ioCtx(ioCtx), _execName(execName), _workingDir(workingDir)
   {}
 
 void
 TorController::start(boost::system::error_code &ec, std::uint16_t socksPort,
-                     std::uint16_t ctrlPort)
+                     std::uint16_t ctrlPort, process_exit_callback cb)
 {
   ec.clear();
   
@@ -188,7 +186,7 @@ TorController::start(boost::system::error_code &ec, std::uint16_t socksPort,
     for (auto &hiddenService : _hiddenServices) {
       buf << "HiddenServiceDir " << hiddenService.path() << std::endl;
       buf << "HiddenServicePort 443"
-        << " localhost:" << hiddenService.port() << std::endl;
+        << " 127.0.0.1:" << hiddenService.port() << std::endl;
     }
     
     torrcContents = buf.str();
@@ -223,59 +221,120 @@ TorController::start(boost::system::error_code &ec, std::uint16_t socksPort,
         "Unable to sync file"));
   }
   
-  /* Open a file containing the process output */
+  /* Create the log file, read/write owner */
   boost::filesystem::path logPath(workingDir / "out.log");
   {
-    _outLogFile = to_unique(PR_Open(logPath.string().c_str(),
-      PR_WRONLY|PR_CREATE_FILE|PR_TRUNCATE|PR_SYNC, PR_IRWXU));
-    if (!_outLogFile)
+    to_unique(PR_Open(logPath.string().c_str(),
+      PR_WRONLY|PR_CREATE_FILE|PR_TRUNCATE|PR_SYNC, PR_IRUSR| PR_IWUSR));
+    /*if (!_outLogFile)
       BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
         "Unable to open output log file"));
 
     std::string header(std::string("*** Tor log file ***\r\n"));
-    PR_Write(_outLogFile.get(), header.data(), header.length());
+    PR_Write(_outLogFile.get(), header.data(), header.length());*/
+  }
+
+  /* Process arguments */
+  ProcessArguments processArgs;
+  {
+    processArgs.addArgument(_execName);
+    processArgs.addArgument("-f");
+    processArgs.addArgument(torrcPath.string().c_str());
+
+    /*char *path = PR_GetEnv("path");
+    if (path)
+    processArgs.addEnvironment(std::string("PATH=") + path);*/
   }
 
   /* Process attributes */
   auto attr = to_unique(PR_NewProcessAttr());
   {
-    PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardOutput,
-      PR_GetSpecialFD(PR_StandardOutput));
-                               //    _outLogFile.get());
-    PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardError,
-      PR_GetSpecialFD(PR_StandardError));
-                              //     _outLogFile.get());
+    // PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardOutput,
+    //   PR_GetSpecialFD(PR_StandardOutput));
+    //    _outLogFile.get());
+    //PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardError,
+    //  PR_GetSpecialFD(PR_StandardError));
+    //     _outLogFile.get());
     PR_ProcessAttrSetCurrentDirectory(attr.get(), _workingDir.c_str());
   }
 
   /* Create the process */
   {
-    /* Process arguments */
-    _processArgs.addArgument(_execName);
-    _processArgs.addArgument("-f");
-    _processArgs.addArgument(torrcPath.string().c_str());
-
     _torProcess = to_unique(PR_CreateProcess(_execName.c_str(),
-      _processArgs.argv(), _processArgs.envp(), attr.get()));
+      processArgs.argv(), nullptr, attr.get()));
+
     if (!_torProcess)
       BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
         "Unable to write to create Tor process"));
   }
-  
-  /* Create the log file reader thread */
+
+  /* Create a thread waiting for the process to terminate */
+  _ioCtx.queueJob([proc(_torProcess.get()), cb]()
   {
-    //ioCtx.queueJob(std::bind(&TorController::logReader, this, logPath));
-  }
+    /* Wait for the process to finish */
+    PRInt32 exitCode = 0xCCCCCCCC;
+    PR_WaitProcess(proc, &exitCode);
+    cb(exitCode);
+  });
+
+  /* Create the log file reader thread */
+  _ioCtx.queueJob([logPath]()
+  {
+    auto logFile = to_unique(PR_Open(logPath.string().c_str(), PR_RDONLY, 0));
+    std::array<char, 80> buf;
+    std::string line;
+    const auto isCrlf = [](char c) { return c == '\n' || c == '\r'; };
+
+    while (1) {
+      auto nread = PR_Read(logFile.get(), buf.data(), buf.size());
+
+      /* Check for errors and EOF */
+      if (nread < 0) {
+        std::cerr << "Error while reading log file" << std::endl;
+        return;
+      } else if (nread == 0) {
+        std::cerr << "EOF while reading log file" << std::endl;
+        return;
+      }
+
+      assert(nread > 0);
+
+      /* Split the text into lines */
+      {
+        auto begin = buf.begin();
+        auto end = buf.begin() + nread;
+
+        while (1) {
+          auto crlfPos = std::find_if(begin, end, isCrlf);
+          line += std::string(begin, crlfPos);
+
+          /* No CR/LF found; store the text for the next read */
+          if (crlfPos == end)
+            break;
+
+          /* Non-empty line found*/
+          if (!line.empty())
+            std::cerr << "Tor said: " << line << std::endl;
+          
+          /* Start a new line */
+          line.clear();
+          begin = std::next(crlfPos);
+        }
+      }
+    }
+  });
 }
+
 /*
 void
 TorController::logReader(std::string logPath)
 {
   auto logFile = to_unique(PR_Open(logPath.c_str(), PR_RDONLY, 0));
+  if (!logFile)
   while (1) {
-    
-    std::cerr << "I am job number two!" << std::endl;
-    PR_Sleep(PR_MillisecondsToInterval(800));
+    PR_Read(logFile.get())
+    //std::cerr << "I am job number two!" << std::endl;
+    //PR_Sleep(PR_MillisecondsToInterval(800));
   }
 }*/
 

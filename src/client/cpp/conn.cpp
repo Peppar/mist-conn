@@ -449,7 +449,8 @@ handshakeSOCKS5(mist::io::Socket &sock,
        final packet size */
     sock.readOnce(5,
       [=, &sock, cb(std::move(cb))]
-      (const std::uint8_t *data, std::size_t length, boost::system::error_code ec) mutable
+      (const std::uint8_t *data, std::size_t length,
+       boost::system::error_code ec) mutable
     {
       if (ec) {
         cb("", ec);
@@ -763,7 +764,9 @@ ConnectContext::startServeTor(std::uint16_t torIncomingPort,
     _torCtrl = std::make_unique<tor::TorController>(ioCtx(), executableName, workingDir);
     _torHiddenService
       = _torCtrl->addHiddenService(torIncomingPort, "mist-service");
-    _torCtrl->start(ec, torOutgoingPort, controlPort);
+    _torCtrl->start(ec, torOutgoingPort, controlPort, [](std::int32_t exitCode) {
+      std::cerr << "Tor process exited with code " << exitCode << std::endl;
+    });
     if (ec)
       BOOST_THROW_EXCEPTION(boost::system::system_error(ec,
         "Unable to start Tor controller"));
@@ -874,18 +877,24 @@ main(int argc, char **argv)
       }
     });*/
     ctx.serveDirect(
-      isServer ? 9150 : 7151); // Direct incoming port
+      isServer ? 8250 : 7283); // Direct incoming port
     ctx.startServeTor(
-      isServer ? 9148 : 7199, // Tor incoming port
-      isServer ? 9158 : 7200, // Tor outgoing port
-      isServer ? 9190 : 7201, // Control port
-      torPath.string(), (rootDir / "tordir").string());
+      isServer ? 8148 : 7280, // Tor incoming port
+      isServer ? 8158 : 7281, // Tor outgoing port
+      isServer ? 8190 : 7282, // Control port
+      torPath.string(), 
+      //"C:\\Users\\Oskar\\Desktop\\Tor\\Browser\\TorBrowser\\Tor\\tor.exe",
+      //"C:\\Users\\Oskar\\Desktop\\Tor\\Browser\\TorBrowser\\Tor");
+      (rootDir / "tordir").string());
     //ctx.externalTor(isServer ? 9158 : 7159);
-    /*ctx.onionAddress(
-      [](const std::string &addr)
+    ctx.onionAddress(
+      [&ctx](const std::string &addr)
     {
       std::cerr << "Onion address is " << addr << std::endl;
-    });*/
+      mist::Peer &peer = *ctx.findPeerByName("myself");
+      peer.setOnionAddress(addr);
+      peer.setOnionPort(443);
+    });
     ctx.setOnSession(
       [=](mist::h2::ServerSession &session)
     {
@@ -956,9 +965,6 @@ main(int argc, char **argv)
       {
         std::cerr << "Trying to connect..." << std::endl;
         mist::Peer &peer = *ctx.findPeerByName("myself");
-        //peer.setOnionAddress("4svkdgkyr5oqxeck.onion");
-        peer.setOnionAddress("www.google.com");
-        peer.setOnionPort(443);
         ctx.connectPeerTor(peer,
           [&ctx](boost::variant<mist::PeerConnection&, boost::system::error_code> result)
         {

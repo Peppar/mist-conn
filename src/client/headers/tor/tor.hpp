@@ -95,7 +95,6 @@ private:
 
   std::list<TorHiddenService> _hiddenServices;
 
-  ProcessArguments _processArgs;
   c_unique_ptr<PRProcess> _torProcess;
 
   c_unique_ptr<PRFileDesc> _outLogFile;
@@ -105,8 +104,10 @@ public:
   TorController(io::IOContext &ioCtx, std::string execName,
                 std::string workingDir);
 
+  using process_exit_callback = std::function<void(std::int32_t exitCode)>;
+
   void start(boost::system::error_code &ec, std::uint16_t socksPort,
-             std::uint16_t ctrlPort);
+             std::uint16_t ctrlPort, process_exit_callback cb);
 
   void stop();
 

@@ -41,8 +41,6 @@ Timeout::Timeout(PRIntervalTime interval, std::function<void()> callback)
  * IOContext
  */
 IOContext::IOContext()
-  : _signalEvent(to_unique<PRFileDesc>()),
-    _threadPool(to_unique<PRThreadPool>())
 {
   _signalEvent = to_unique(PR_NewPollableEvent(), [](PRFileDesc *p) {
     PR_DestroyPollableEvent(p);
