@@ -862,12 +862,12 @@ main(int argc, char **argv)
       }
     });*/
     ctx.serveDirect(
-      isServer ? 8250 : 7383); // Direct incoming port
+      isServer ? 8250 : 6483); // Direct incoming port
     ctx.startServeTor(
-      isServer ? 8148 : 7380, // Tor incoming port
-      isServer ? 8158 : 7381, // Tor outgoing port
-      isServer ? 8190 : 7382, // Control port
-      torPath.string(), 
+      isServer ? 8148 : 6480, // Tor incoming port
+      isServer ? 8158 : 6481, // Tor outgoing port
+      isServer ? 8190 : 6482, // Control port
+      torPath.string(),
       //"C:\\Users\\Oskar\\Desktop\\Tor\\Browser\\TorBrowser\\Tor\\tor.exe",
       //"C:\\Users\\Oskar\\Desktop\\Tor\\Browser\\TorBrowser\\Tor");
       rootDir.string());

@@ -67,9 +67,6 @@ private:
   std::list<TorHiddenService> _hiddenServices;
 
   c_unique_ptr<PRProcess> _torProcess;
-#if !(defined(_WIN32)||defined(_WIN64))
-  c_unique_ptr<PRFileDesc> _torLogFile;
-#endif
 
   std::vector<std::string> _bridges;
 

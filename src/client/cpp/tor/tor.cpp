@@ -175,7 +175,6 @@ writeAll(PRFileDesc *fd, std::string contents)
         break;
     }
   }
-
 }
 
 bool
@@ -194,21 +193,23 @@ TorController::runTorProcess(std::vector<std::string> processArgs,
 
   _sslCtx.ioCtx().queueJob([=]() mutable
   {
-    std::string executable = _execName;
-    
-#if defined(_WIN32)||defined(_WIN64)
-    /* Due to difficulties with redirecting Tor's STDOUT/STDERR on windows,
-    we need to use a launchpad command file to recover its output */
+    /* Due to difficulties with redirecting Tor's STDOUT/STDERR,
+    we need to use a launchpad script to recover its output */
+    std::string executable;
     {
+#if defined(_WIN32)||defined(_WIN64)
+      std::string launchpadName = "launchpad.cmd";
+#else
+      std::string launchpadName = "launchpad.sh";
+#endif
       auto launchpadPath
-        = boost::filesystem::path(workingDir) / "launchpad.cmd";
-
-      /* Set the real executable path as first argument */
-      processArgs.insert(processArgs.begin(), executable);
+        = boost::filesystem::path(workingDir) / launchpadName;
 
       executable = launchpadPath.string();
+
+      processArgs.insert(processArgs.begin(), _execName);
+      processArgs.insert(processArgs.begin(), executable);
     }
-#endif
 
     /* Convert arguments to argv format */
     std::vector<char *> argv;
@@ -219,27 +220,9 @@ TorController::runTorProcess(std::vector<std::string> processArgs,
       argv.push_back(nullptr);
     }
 
-#if !(defined(_WIN32)||defined(_WIN64))
-    auto logFilePath
-      = boost::filesystem::path(workingDir) / "out.log";
-    {
-      _torLogFile = to_unique(PR_Open(logFilePath.string().c_str(),
-        PR_WRONLY|PR_CREATE_FILE|PR_TRUNCATE|PR_SYNC, PR_IRUSR|PR_IWUSR));
-    }
-#endif
-
     /* Process attributes */
     auto attr = to_unique(PR_NewProcessAttr());
     {
-#if !(defined(_WIN32)||defined(_WIN64))
-      PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardOutput,
-        _torLogFile.get());
-        //PR_GetSpecialFD(PR_StandardOutput));
-      PR_ProcessAttrSetStdioRedirect(attr.get(), PR_StandardError,
-        _torLogFile.get());
-        //PR_GetSpecialFD(PR_StandardOutput));
-#endif
-
       PR_ProcessAttrSetCurrentDirectory(attr.get(), workingDir.c_str());
     }
 
@@ -254,9 +237,12 @@ TorController::runTorProcess(std::vector<std::string> processArgs,
     }
 
     /* Wait for the process to finish */
-    PRInt32 exitCode = 0xCCCCCCCC;
-    PR_WaitProcess(_torProcess.get(), &exitCode);
-    cb(exitCode);
+    {
+      PRInt32 exitCode = 0xCCCCCCCC;
+      /* Release the process pointer here, PR_WaitProcess takes care of it */
+      PR_WaitProcess(_torProcess.release(), &exitCode);
+      cb(exitCode);
+    }
   });
 }
 
@@ -271,7 +257,7 @@ TorController::start(std::uint16_t socksPort, std::uint16_t ctrlPort)
   boost::filesystem::path workingDir(_workingDir);
 
   /* Launch tor to create the password hash */
-  runTorProcess({_execName, "--hash-password", _password, "--quiet"},
+  runTorProcess({"--hash-password", _password, "--quiet"},
     [=, anchor(shared_from_this())](std::int32_t exitCode)
   {
     if (exitCode) {
@@ -352,7 +338,7 @@ TorController::start(std::uint16_t socksPort, std::uint16_t ctrlPort)
     /* Launch Tor for real this time */
     {
       using namespace std::placeholders;
-      runTorProcess({_execName, "-f", torrcPath.string()},
+      runTorProcess({"-f", torrcPath.string()},
         std::bind(&TorController::torProcessExit, this, _1));
     }
 
