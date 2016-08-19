@@ -102,7 +102,9 @@ IOContext::addDescriptor(std::shared_ptr<FileDescriptor> descriptor)
 void
 IOContext::setTimeout(unsigned int interval, job_callback callback)
 {
-  _timeouts.emplace_back(PR_MillisecondsToInterval(interval), callback);
+  /* Add the timeout to the front of the list to avoid infinite loops
+  when a timeout callback sets new timeouts */
+  _timeouts.emplace_front(PR_MillisecondsToInterval(interval), callback);
 }
 
 PRJob *
@@ -217,10 +219,9 @@ IOContext::ioStep(unsigned int maxTimeout)
 
   /* Handle timeouts */
   {
-    PRIntervalTime now = PR_IntervalNow();
     for (auto i = _timeouts.begin(); i != _timeouts.end(); ) {
       PRIntervalTime elapsedSince
-        = static_cast<PRIntervalTime>(now - i->established);
+        = static_cast<PRIntervalTime>(PR_IntervalNow() - i->established);
       if (elapsedSince > i->interval) {
         // PR_QueueJob
         i->callback();

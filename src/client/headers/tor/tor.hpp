@@ -60,19 +60,22 @@ private:
   std::string _workingDir;
   std::uint16_t _socksPort;
   std::uint16_t _ctrlPort;
+  
+  std::string _execName;
+  std::string _workingDir;
   std::string _password;
 
   std::list<TorHiddenService> _hiddenServices;
 
   c_unique_ptr<PRProcess> _torProcess;
-#if !(defined(_WIN32)||defined(_WIN64))
-  c_unique_ptr<PRFileDesc> _torLogFile;
-#endif
 
   std::vector<std::string> _bridges;
 
   std::string _pendingResponse;
   std::shared_ptr<io::Socket> _ctrlSocket;
+
+  void runTorProcess(std::vector<std::string> processArgs,
+    std::function<void(std::int32_t)> cb);
 
   void connectControlPort();
 

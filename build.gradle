@@ -269,8 +269,10 @@ model {
             linker.args '-lnspr4'
             linker.args '-lplc4'
             linker.args '-lssl3'
+            linker.args '-lsmime3'
             linker.args '-lboost_system'
             linker.args '-lboost_random'
+            linker.args '-lboost_filesystem'
             linker.args '-lnghttp2'
             linker.args '-lpthread'
           }
