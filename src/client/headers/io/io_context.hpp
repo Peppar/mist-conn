@@ -12,11 +12,14 @@
 #include "memory/nss.hpp"
 
 #include "io/file_descriptor.hpp"
+#include "io/socket.hpp"
 
 namespace mist
 {
 namespace io
 {
+
+c_unique_ptr<PRFileDesc> openTCPSocket();
 
 struct Timeout
 {
@@ -61,6 +64,8 @@ public:
   void addDescriptor(std::shared_ptr<FileDescriptor> descriptor);
 
   void signal();
+
+  std::shared_ptr<Socket> openSocket();
 
 };
 

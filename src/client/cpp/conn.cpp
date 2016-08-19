@@ -607,7 +607,7 @@ void
 ConnectContext::connectPeerDirect(Peer &peer, PRNetAddr *addr,
   handshake_peer_callback cb)
 {
-  std::shared_ptr<io::SSLSocket> socket = _sslCtx.openClientSocket();
+  std::shared_ptr<io::SSLSocket> socket = _sslCtx.openSocket();
   socket->connect(addr,
     [this, &peer, socket, cb(std::move(cb))]
   (boost::system::error_code ec)
@@ -624,7 +624,7 @@ ConnectContext::connectPeerDirect(Peer &peer, PRNetAddr *addr,
 void
 ConnectContext::connectPeerTor(Peer &peer, handshake_peer_callback cb)
 {
-  std::shared_ptr<io::SSLSocket> socket = _sslCtx.openClientSocket();
+  std::shared_ptr<io::SSLSocket> socket = _sslCtx.openSocket();
   connectTor(*socket, *_torOutgoingPort, *peer.onionAddress(), *peer.onionPort(),
     [this, &peer, socket, cb(std::move(cb))]
     (std::string connectedAddress, boost::system::error_code ec)
@@ -751,7 +751,7 @@ ConnectContext::startServeTor(std::uint16_t torIncomingPort,
 
   /* Start Tor */
   {
-    _torCtrl = std::make_shared<tor::TorController>(sslCtx(), executableName, workingDir);
+    _torCtrl = std::make_shared<tor::TorController>(ioCtx(), executableName, workingDir);
     _torHiddenService
       = _torCtrl->addHiddenService(torIncomingPort, "mist-service");
     _torCtrl->start(torOutgoingPort, controlPort);

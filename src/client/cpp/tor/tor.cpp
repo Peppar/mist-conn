@@ -17,7 +17,7 @@
 
 #include "error/nss.hpp"
 #include "io/file_descriptor.hpp"
-#include "io/ssl_context.hpp"
+#include "io/io_context.hpp"
 #include "memory/nss.hpp"
 #include "tor/tor.hpp"
 
@@ -95,9 +95,9 @@ TorHiddenService::onionAddress(onion_address_callback cb)
 /*
  * TorController
  */
-TorController::TorController(io::SSLContext &sslCtx, std::string execName,
+TorController::TorController(io::IOContext &ioCtx, std::string execName,
                              std::string workingDir)
-  : _sslCtx(sslCtx), _execName(execName), _workingDir(workingDir)
+  : _ioCtx(ioCtx), _execName(execName), _workingDir(workingDir)
   {}
 
 namespace
@@ -247,7 +247,6 @@ writeAll(PRFileDesc *fd, std::string contents)
         break;
     }
   }
-
 }
 
 bool
@@ -269,8 +268,8 @@ TorController::start(std::uint16_t socksPort,  std::uint16_t ctrlPort)
   boost::filesystem::path workingDir(_workingDir);
 
   /* Launch tor to create the password hash */
-  runTorProcess(_sslCtx.ioCtx(), _execName, _workingDir, {_execName,
-    "--hash-password", _password, "--quiet"},
+  runTorProcess(_ioCtx, _execName, _workingDir, { _execName,
+    "--hash-password", _password, "--quiet" },
     [=, anchor(shared_from_this())](std::int32_t exitCode)
   {
     if (exitCode) {
@@ -337,7 +336,7 @@ TorController::start(std::uint16_t socksPort,  std::uint16_t ctrlPort)
     /* Launch Tor for real this time */
     {
       using namespace std::placeholders;
-      runTorProcess(_sslCtx.ioCtx(), _execName, _workingDir,
+      runTorProcess(_ioCtx, _execName, _workingDir,
         { _execName, "-f", torrcPath.string() },
         std::bind(&TorController::torProcessExit, this, _1));
     }
@@ -405,7 +404,7 @@ TorController::readResponse(const std::uint8_t *data, std::size_t length,
 void
 TorController::connectControlPort()
 {
-  _ctrlSocket = _sslCtx.openClientSocket();
+  _ctrlSocket = _ioCtx.openSocket();
 
   /* Bind the address */
   PRNetAddr addr;
@@ -422,7 +421,7 @@ TorController::connectControlPort()
 
     /* Unable to connect; retry */
     if (ec) {
-      _sslCtx.ioCtx().setTimeout(1000,
+      _ioCtx.setTimeout(1000,
         std::bind(&TorController::connectControlPort, this));
       return;
     }
@@ -455,7 +454,7 @@ TorHiddenService &
 TorController::addHiddenService(std::uint16_t port, std::string name)
 {
   boost::filesystem::path workingDir(_workingDir);
-  _hiddenServices.emplace_back(_sslCtx.ioCtx(), *this, port,
+  _hiddenServices.emplace_back(_ioCtx, *this, port,
     (workingDir / name).string());
   return *(--_hiddenServices.end());
 }

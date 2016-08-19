@@ -22,11 +22,30 @@
 #include "memory/nss.hpp"
 
 #include "io/io_context.hpp"
+#include "io/socket.hpp"
 
 namespace mist
 {
 namespace io
 {
+/* Open a non-blocking TCP socket */
+c_unique_ptr<PRFileDesc>
+openTCPSocket()
+{
+  auto fd = to_unique(PR_OpenTCPSocket(PR_AF_INET));
+  if (!fd)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to open TCP socket"));
+
+  PRSocketOptionData sockOpt;
+  sockOpt.option = PR_SockOpt_Nonblocking;
+  sockOpt.value.non_blocking = PR_TRUE;
+  if (PR_SetSocketOption(fd.get(), &sockOpt) != PR_SUCCESS)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to set PR_SockOpt_Nonblocking"));
+
+  return std::move(fd);
+}
 
 /*
  * Timeout
@@ -63,6 +82,14 @@ IOContext::signal()
   if (PR_SetPollableEvent(_signalEvent.get()) != PR_SUCCESS)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to signal write"));
+}
+
+std::shared_ptr<Socket>
+IOContext::openSocket()
+{
+  auto socket = std::make_shared<Socket>(*this, openTCPSocket(), false);
+  addDescriptor(socket);
+  return std::move(socket);
 }
 
 void

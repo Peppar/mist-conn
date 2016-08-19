@@ -183,7 +183,7 @@ SSLContext::serve(std::uint16_t servPort, connection_callback cb)
 {
   const std::size_t backlog = 16;
 
-  auto fd = openSocket();
+  auto fd = openTCPSocket();
   {
     initializeSecurity(fd);
     
@@ -224,9 +224,9 @@ SSLContext::serve(std::uint16_t servPort, connection_callback cb)
 }
 
 std::shared_ptr<SSLSocket>
-SSLContext::openClientSocket()
+SSLContext::openSocket()
 {
-  auto socket = std::make_shared<SSLSocket>(*this, openSocket(), false);
+  auto socket = std::make_shared<SSLSocket>(*this, openTCPSocket(), false);
   _ioCtx.addDescriptor(socket);
   return std::move(socket);
 }
@@ -471,25 +471,6 @@ SSLContext::initializeTLS(SSLSocket &sock)
   if(SSL_ResetHandshake(sslfd, sock.isServer() ? PR_TRUE : PR_FALSE) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to reset handshake"));
-}
-
-/* Open a non-blocking socket */
-c_unique_ptr<PRFileDesc>
-SSLContext::openSocket()
-{
-  auto fd = to_unique(PR_OpenTCPSocket(PR_AF_INET));
-  if (!fd)
-    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      "Unable to open TCP socket"));
-
-  PRSocketOptionData sockOpt;
-  sockOpt.option = PR_SockOpt_Nonblocking;
-  sockOpt.value.non_blocking = PR_TRUE;
-  if (PR_SetSocketOption(fd.get(), &sockOpt) != PR_SUCCESS)
-    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
-      "Unable to set PR_SockOpt_Nonblocking"));
-
-  return std::move(fd);
 }
 
 } // namespace io

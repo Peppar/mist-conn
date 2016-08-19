@@ -55,7 +55,7 @@ class TorController : public std::enable_shared_from_this<TorController>
 {
 private:
 
-  io::SSLContext &_sslCtx;
+  io::IOContext &_ioCtx;
   std::string _execName;
   std::string _workingDir;
   std::uint16_t _socksPort;
@@ -85,7 +85,7 @@ private:
 
 public:
 
-  TorController(io::SSLContext &sslCtx, std::string execName,
+  TorController(io::IOContext &ioCtx, std::string execName,
                 std::string workingDir);
 
   using process_exit_callback = std::function<void(std::int32_t exitCode)>;

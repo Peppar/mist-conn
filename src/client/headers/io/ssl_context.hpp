@@ -45,15 +45,12 @@ private:
 
   /* Initialize NSS with the given database directory */
   void initializeNSS(const std::string &dbdir);
-  
+
   /* Upgrades the NSPR socket file descriptor to TLS */
   void initializeSecurity(c_unique_ptr<PRFileDesc> &fd);
   
   /* Initialize the socket with mist TLS settings */
   void initializeTLS(SSLSocket &sock);
-  
-  /* Opens a non-blocking socket */
-  c_unique_ptr<PRFileDesc> openSocket();
 
   /* Called when NSS wants to get the client certificate */
   SECStatus getClientCert(SSLSocket &socket, CERTDistNames *caNames,
@@ -61,7 +58,8 @@ private:
                           SECKEYPrivateKey **pRetKy);
 
   /* Called when NSS wants to authenticate the peer certificate */
-  SECStatus authCertificate(SSLSocket &socket, PRBool checkSig, PRBool isServer);
+  SECStatus authCertificate(SSLSocket &socket, PRBool checkSig,
+                            PRBool isServer);
 
   /* Called when NSS wants us to supply a password */
   boost::optional<std::string> getPassword(PK11SlotInfo *info, PRBool retry);
@@ -75,7 +73,7 @@ public:
 
   void serve(std::uint16_t servPort, connection_callback cb);
 
-  std::shared_ptr<SSLSocket> openClientSocket();
+  std::shared_ptr<SSLSocket> openSocket();
 
 };
 
