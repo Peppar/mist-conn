@@ -26,7 +26,7 @@ struct Timeout
   PRIntervalTime established;
   PRIntervalTime interval;
   std::function<void()> callback;
-  
+
   Timeout(PRIntervalTime interval, std::function<void()> callback);
 };
 

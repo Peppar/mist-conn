@@ -177,9 +177,6 @@ private:
   /* Peer to PeerConnection map */
   std::map<Peer*, std::unique_ptr<PeerConnection>> _peerConnections;
 
-  /* Outgoing connection Tor port (SOCKS5) */
-  boost::optional<std::uint16_t> _torOutgoingPort;
-  
   boost::optional<tor::TorHiddenService&> _torHiddenService;
 
   peer_connection_callback _connectionCb;
@@ -223,8 +220,6 @@ public:
                      std::uint16_t controlPort,
                      std::string executableName,
                      std::string workingDir);
-
-  void externalTor(std::uint16_t torOutgoingPort);
 
   void onionAddress(std::function<void(const std::string&)> cb);
   

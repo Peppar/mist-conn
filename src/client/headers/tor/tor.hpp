@@ -61,8 +61,6 @@ private:
   std::uint16_t _socksPort;
   std::uint16_t _ctrlPort;
   
-  std::string _execName;
-  std::string _workingDir;
   std::string _password;
 
   std::list<TorHiddenService> _hiddenServices;
@@ -100,6 +98,11 @@ public:
   bool isRunning() const;
 
   TorHiddenService &addHiddenService(std::uint16_t port, std::string name);
+
+  using connect_callback = std::function<void(boost::system::error_code)>;
+
+  void connect(io::Socket &socket, std::string hostname, std::uint16_t port,
+    connect_callback cb);
   
 };
 

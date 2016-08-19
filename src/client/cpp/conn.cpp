@@ -249,7 +249,7 @@ std::string nicknameFromFilename(const std::string &filename)
     return filename;
   return std::string(filename.data(), filename.data() + pos);
 }
-}
+} // namespace
 
 PeerDb::PeerDb(const std::string &directory)
 {
@@ -384,163 +384,6 @@ PeerConnection::peer()
  * ConnectContext
  */
 
-namespace
-{
-
-using socks_callback
-  = std::function<void(std::string, boost::system::error_code)>;
-
-/* Try to perform a SOCKS5 handshake to connect to the given
-   domain name and port. */
-void
-handshakeSOCKS5(mist::io::Socket &sock,
-                std::string hostname, std::uint16_t port,
-                socks_callback cb)
-{
-  std::array<std::uint8_t, 3> socksReq;
-  socksReq[0] = 5; /* Version */
-  socksReq[1] = 1;
-  socksReq[2] = 0;
-
-  sock.write(socksReq.data(), socksReq.size());
-
-  sock.readOnce(2,
-    [=, &sock, cb(std::move(cb))]
-    (const std::uint8_t *data, std::size_t length,
-     boost::system::error_code ec) mutable
-  {
-    if (ec) {
-      cb("", ec);
-      return;
-    }
-    if (length != 2 || data[0] != 5 || data[1] != 0) {
-      cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
-      return;
-    }
-    
-    /* Construct the SOCKS5 connect request */
-    std::vector<std::uint8_t> connReq(5 + hostname.length() + 2);
-    {
-      auto outIt = connReq.begin();
-      *(outIt++) = 5; /* Version */
-      *(outIt++) = 1; /* Connect */
-      *(outIt++) = 0; /* Must be zero */
-      *(outIt++) = 3; /* Resolve domain name */
-      *(outIt++) = static_cast<std::uint8_t>(hostname.length()); /* Domain name length */
-      outIt = std::copy(hostname.begin(), hostname.end(), outIt); /* Domain name */
-      *(outIt++) = static_cast<std::uint8_t>((port >> 8) & 0xff); /* Port MSB */
-      *(outIt++) = static_cast<std::uint8_t>(port & 0xff); /* Port LSB */
-      /* Make sure that we can count */
-      assert (outIt == connReq.end());
-    }
-    
-    sock.write(connReq.data(), connReq.size());
-    
-    /* Read 5 bytes; these are all the bytes we need to determine the
-       final packet size */
-    sock.readOnce(5,
-      [=, &sock, cb(std::move(cb))]
-      (const std::uint8_t *data, std::size_t length,
-       boost::system::error_code ec) mutable
-    {
-      if (ec) {
-        cb("", ec);
-        return;
-      }
-      if (length != 5 || data[0] != 5) {
-        cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
-        return;
-      }
-      
-      bool success = data[1] == 0;
-      std::uint8_t type = data[3];
-      std::uint8_t firstByte = data[4];
-      
-      std::size_t complLength;
-      if (type == 1)
-        complLength = 10 - 5;
-      else if (type == 3)
-        complLength = 7 + firstByte - 5;
-      else if (type == 4)
-        complLength = 22 - 5;
-      else {
-        cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
-        return;
-      }
-      
-      sock.readOnce(complLength,
-        [=, &sock, cb(std::move(cb))]
-        (const std::uint8_t *data, std::size_t length,
-         boost::system::error_code ec) mutable
-      {
-        if (ec) {
-          cb("", ec);
-          return;
-        }
-        if (complLength != length) {
-          cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
-          return;
-        }
-        
-        std::string address;
-        if (type == 1)
-          address = std::to_string(firstByte) + '.'
-            + std::to_string(data[0]) + '.'
-            + std::to_string(data[1]) + '.'
-            + std::to_string(data[2]) + ':'
-            + std::to_string((data[3] << 8) | data[4]);
-        else if (type == 3)
-          address = std::string(reinterpret_cast<const char*>(data),
-                                firstByte) + ':'
-            + std::to_string((data[firstByte] << 8) | data[firstByte + 1]);
-        else if (type == 4)
-          address = to_hex(firstByte) + to_hex(data[0]) + ':'
-            + to_hex(data[1]) + to_hex(data[2]) + ':'
-            + to_hex(data[3]) + to_hex(data[4]) + ':'
-            + to_hex(data[5]) + to_hex(data[6]) + ':'
-            + to_hex(data[7]) + to_hex(data[8]) + ':'
-            + to_hex(data[9]) + to_hex(data[10]) + ':'
-            + to_hex(data[11]) + to_hex(data[12]) + ':'
-            + to_hex(data[13]) + to_hex(data[14]) + ':'
-            + std::to_string((data[15] << 8) | data[16]);
-        assert (address.length());
-        if (!success) {
-          cb(address, mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
-        } else {
-          cb(address, boost::system::error_code());
-        }
-      });
-    });
-  });
-}
-
-/* Connect the socket through a local Tor SOCKS5 proxy. */
-void
-connectTor(mist::io::Socket &sock, std::uint16_t torPort,
-           std::string hostname, std::uint16_t port,
-           socks_callback cb)
-{
-  /* Initialize addr to localhost:torPort */
-  PRNetAddr addr;
-  if (PR_InitializeNetAddr(PR_IpAddrLoopback, torPort, &addr) != PR_SUCCESS) {
-    cb("", mist::make_nss_error());
-    return;
-  }
-
-  sock.connect(&addr,
-    [=, &sock, cb(std::move(cb))]
-    (boost::system::error_code ec) mutable
-  {
-    if (ec) {
-      cb("", ec);
-      return;
-    }
-    handshakeSOCKS5(sock, std::move(hostname), port, std::move(cb));
-  });
-}
-
-} // namespace
-
 ConnectContext::ConnectContext(io::SSLContext &sslCtx,
                                std::string peerdir)
   : _sslCtx(sslCtx), _peerDb(std::move(peerdir))
@@ -610,12 +453,15 @@ ConnectContext::connectPeerDirect(Peer &peer, PRNetAddr *addr,
   std::shared_ptr<io::SSLSocket> socket = _sslCtx.openSocket();
   socket->connect(addr,
     [this, &peer, socket, cb(std::move(cb))]
-  (boost::system::error_code ec)
+    (boost::system::error_code ec)
   {
     if (ec) {
+      std::cerr << ec.message() << " while connecting to peer directly"
+        << std::endl;
       cb(ec);
     }
     else {
+      std::cerr << "Connected to peer directly" << std::endl;
       handshakePeer(*socket, peer, std::move(cb));
     }
   });
@@ -625,36 +471,19 @@ void
 ConnectContext::connectPeerTor(Peer &peer, handshake_peer_callback cb)
 {
   std::shared_ptr<io::SSLSocket> socket = _sslCtx.openSocket();
-  connectTor(*socket, *_torOutgoingPort, *peer.onionAddress(), *peer.onionPort(),
-    [this, &peer, socket, cb(std::move(cb))]
-    (std::string connectedAddress, boost::system::error_code ec)
-  {
-    if (ec) {
-      std::cerr << ec.message() << " while connecting to " << connectedAddress << std::endl;
-      cb(ec);
-    } else {
-      std::cerr << "Connected to " << connectedAddress << std::endl;
-      handshakePeer(*socket, peer, std::move(cb));
-    }
-  });
-
-/*
-  PRNetAddr addr;
-  if (PR_InitializeNetAddr(PR_IpAddrLoopback, *_torOutgoingPort, &addr)
-      != PR_SUCCESS)
-    throw new std::runtime_error("PR_InitializeNetAddr failed");
-
-  socket->connect(&addr,
+  _torCtrl->connect(*socket, *peer.onionAddress(), *peer.onionPort(),
     [this, &peer, socket, cb(std::move(cb))]
     (boost::system::error_code ec)
   {
     if (ec) {
+      std::cerr << ec.message() << " while connecting to peer via tor"
+        << std::endl;
       cb(ec);
     } else {
-      
-      handshakeSOCKS5(*socket, *peer.onionAddress(), *peer.onionPort()
+      std::cerr << "Connected to peer via tor" << std::endl;
+      handshakePeer(*socket, peer, std::move(cb));
     }
-  });*/
+  });
 }
 
 void 
@@ -756,14 +585,6 @@ ConnectContext::startServeTor(std::uint16_t torIncomingPort,
       = _torCtrl->addHiddenService(torIncomingPort, "mist-service");
     _torCtrl->start(torOutgoingPort, controlPort);
   }
-
-  _torOutgoingPort = torOutgoingPort;
-}
-
-void
-ConnectContext::externalTor(std::uint16_t torOutgoingPort)
-{
-  _torOutgoingPort = torOutgoingPort;
 }
 
 void
