@@ -56,8 +56,8 @@ protected:
   void write();
 
   virtual int onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
-                       std::size_t namelen, const std::uint8_t *value,
-                       std::size_t valuelen, std::uint8_t flags) = 0;
+    std::size_t namelen, const std::uint8_t *value, std::size_t valuelen,
+    std::uint8_t flags) = 0;
 
   virtual int onFrameSend(const nghttp2_frame *frame) = 0;
 
@@ -65,7 +65,8 @@ protected:
 
   virtual int onFrameRecv(const nghttp2_frame *frame) = 0;
 
-  virtual int onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t len) = 0;
+  virtual int onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data,
+    std::size_t len) = 0;
 
   virtual int onStreamClose(std::uint32_t errorCode) = 0;
   
@@ -104,8 +105,8 @@ private:
 protected:
 
   virtual int onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
-                       std::size_t namelen, const std::uint8_t *value,
-                       std::size_t valuelen, std::uint8_t flags) override;
+    std::size_t namelen, const std::uint8_t *value, std::size_t valuelen,
+    std::uint8_t flags) override;
 
   virtual int onFrameSend(const nghttp2_frame *frame) override;
 
@@ -114,7 +115,8 @@ protected:
 
   virtual int onFrameRecv(const nghttp2_frame *frame) override;
 
-  virtual int onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t len) override;
+  virtual int onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data,
+    std::size_t len) override;
 
   virtual int onStreamClose(std::uint32_t errorCode) override;
   
@@ -128,12 +130,8 @@ public:
 
   ClientResponse &response();
   
-  boost::system::error_code submit(std::string method,
-                                   std::string path,
-                                   std::string scheme,
-                                   std::string authority,
-                                   header_map headers,
-                                   generator_callback cb);
+  void submit(std::string method, std::string path, std::string scheme,
+    std::string authority, header_map headers, generator_callback cb);
 
 };
 
@@ -172,9 +170,8 @@ public:
 
   ServerResponse &response();
   
-  boost::system::error_code submit(std::uint16_t statusCode,
-                                   header_map headers,
-                                   generator_callback cb);
+  void submit(std::uint16_t statusCode, header_map headers,
+    generator_callback cb);
   
 };
 

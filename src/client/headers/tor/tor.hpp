@@ -69,8 +69,8 @@ private:
 
   std::vector<std::string> _bridges;
 
-  std::string _pendingResponse;
   std::shared_ptr<io::Socket> _ctrlSocket;
+  std::string _pendingResponse;
 
   void runTorProcess(std::vector<std::string> processArgs,
     std::function<void(std::int32_t)> cb);
@@ -89,7 +89,7 @@ public:
   TorController(io::IOContext &ioCtx, std::string execName,
                 std::string workingDir);
 
-  using process_exit_callback = std::function<void(std::int32_t exitCode)>;
+  TorHiddenService &addHiddenService(std::uint16_t port, std::string name);
 
   void start(std::uint16_t socksPort, std::uint16_t ctrlPort);
 
@@ -97,10 +97,9 @@ public:
 
   bool isRunning() const;
 
-  TorHiddenService &addHiddenService(std::uint16_t port, std::string name);
-
+  /* Connect the given socket to the given hostname and port using the
+  Tor SOCKS proxy*/
   using connect_callback = std::function<void(boost::system::error_code)>;
-
   void connect(io::Socket &socket, std::string hostname, std::uint16_t port,
     connect_callback cb);
   

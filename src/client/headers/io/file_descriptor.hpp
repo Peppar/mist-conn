@@ -15,8 +15,6 @@ class FileDescriptor
 {
 public:
 
-  virtual ~FileDescriptor();
-
   virtual PRFileDesc *fileDesc() = 0;
   
   virtual boost::optional<PRInt16> inFlags() const = 0;

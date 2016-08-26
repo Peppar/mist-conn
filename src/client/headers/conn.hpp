@@ -31,27 +31,49 @@
 namespace mist
 {
 
+struct TorAddress
+{
+  std::string hostname;
+  std::uint16_t port;
+};
+
 class Peer
 {
+public:
+
+  using address_list = std::list<TorAddress>;
+  enum ConnectionType { Direct, Tor };
+  enum ConnectionDirection { Client, Server };
+
 private:
+
+  std::shared_ptr<io::SSLSocket> _socket;
+  std::shared_ptr<h2::ServerSession> _serverSession;
+  std::shared_ptr<h2::ClientSession> _clientSession;
+
+  void onRequest(h2::ServerRequest &request);
 
   std::string _nickname;
   c_unique_ptr<CERTCertificate> _cert;
-  boost::optional<std::string> _onionAddress;
-  boost::optional<std::uint16_t> _onionPort;
+  address_list _addresses;
 
 public:
+
+  Peer(std::string nickname, c_unique_ptr<CERTCertificate> cert);
+
+  void connection(std::shared_ptr<io::SSLSocket> socket,
+    ConnectionType connType, ConnectionDirection connDirection);
 
   const std::string nickname() const;
   const CERTCertificate *cert() const;
 
-  void setOnionAddress(std::string onionAddress);
-  const boost::optional<std::string> &onionAddress() const;
+  const address_list &addresses() const;
+  void addAddress(TorAddress address);
 
-  void setOnionPort(std::uint16_t onionPort);
-  const boost::optional<std::uint16_t> &onionPort() const;
-  
-  Peer(std::string nickname, c_unique_ptr<CERTCertificate> cert);
+  h2::ClientRequest&
+  submit(std::string method, std::string path, std::string scheme,
+    std::string authority, h2::header_map headers,
+    h2::generator_callback cb = nullptr);
 
 };
 
@@ -78,92 +100,26 @@ private:
 
   Service(Service &) = delete;
   Service &operator=(Service &) = delete;
-  
+
   ConnectContext &_ctx;
-  
+
 protected:
-  
+
 public:
 
   Service(ConnectContext &ctx);
 
   virtual ~Service();
-  
+
   virtual void onServerSession(Peer &peer, h2::ServerSession &session) = 0;
   virtual void onClientSession(Peer &peer, h2::ClientSession &session) = 0;
   virtual void onWebSocket(Peer &peer) = 0;
 
 };
 
-class PeerConnection
-{
-private:
-
-  friend class ConnectContext;
-  
-  ConnectContext &_context;
-
-  enum class State {
-    Unconnected,
-    TorConnected,
-    DirectConnecting,
-    DirectConnected,
-  } _state;
-  
-  Peer &_peer;
-
-  std::shared_ptr<h2::Session> _session;
-
-  void torConnection(std::shared_ptr<io::SSLSocket> socket);
-  
-  void directConnection(std::shared_ptr<io::SSLSocket> socket);
-
-  void connect();
-
-public:
-
-  virtual ~PeerConnection();
-  
-  ConnectContext &context();
-
-  virtual h2::Session &session();
-  
-  /*
-  template<typename SessionT, typename... Args>
-  SessionT &makeSession(Args&&... args)
-  {
-    std::unique_ptr<SessionT> session
-      = std::make_unique<SessionT>(std::forward<Args>(args)...);
-    
-    SessionT &sessionRef = *session;
-    sessions.emplace_back(std::move(session));
-    
-    sessionRef.
-    return sessionRef;
-  }
-
-  template<typename SessionT>
-  SessionT &setSession(std::unique_ptr<SessionT> session)
-  {
-    _session = std::move(session);
-    return *static_cast<SessionT>(_session.get());
-  }*/
-
-  PeerConnection(ConnectContext &context, Peer &peer);
-
-  Peer &peer();
-
-};
-
 class ConnectContext
 {
-public:
-
-  using peer_connection_callback = std::function<void(PeerConnection&)>;
-
 private:
-
-  friend class PeerConnection;
 
   /* SSL context */
   io::SSLContext &_sslCtx;
@@ -171,47 +127,45 @@ private:
   /* Tor controller */
   std::shared_ptr<tor::TorController> _torCtrl;
   
+  /* Hidden service for incoming Tor connections */
+  boost::optional<tor::TorHiddenService&> _torHiddenService;
+
   /* Test peer database */
   PeerDb _peerDb;
 
-  /* Peer to PeerConnection map */
-  std::map<Peer*, std::unique_ptr<PeerConnection>> _peerConnections;
-
-  boost::optional<tor::TorHiddenService&> _torHiddenService;
-
-  peer_connection_callback _connectionCb;
-  
-  h2::server_session_callback _sessionCb;
+  std::vector<std::string> _directories;
 
 protected:
 
   using handshake_peer_callback
-    = std::function<void(boost::variant<PeerConnection&,
-                                        boost::system::error_code>)>;
+    = std::function<void(boost::optional<Peer&>, boost::system::error_code)>;
 
   boost::optional<Peer&> findPeerByCert(CERTCertificate *cert);
 
   void handshakePeer(io::SSLSocket &sock, boost::optional<Peer&> knownPeer,
-                     handshake_peer_callback cb);
+    handshake_peer_callback cb);
 
   void incomingDirectConnection(std::shared_ptr<io::SSLSocket> socket);
   
   void incomingTorConnection(std::shared_ptr<io::SSLSocket> socket);
 
+  void tryConnectPeerTor(Peer &peer, Peer::address_list::const_iterator it);
+
 public:
+
+  void connectPeerDirect(Peer &peer, PRNetAddr *addr);
+
+  void connectPeerTor(Peer &peer);
 
   ConnectContext(io::SSLContext &sslCtx, std::string peerdir);
 
   io::IOContext &ioCtx();
 
   io::SSLContext &sslCtx();
+
+  void addDirectory(std::string directory);
   
   boost::optional<Peer&> findPeerByName(const std::string &nickname);
-
-  void connectPeerDirect(Peer &peer, PRNetAddr *addr,
-    handshake_peer_callback cb);
-
-  void connectPeerTor(Peer &peer, handshake_peer_callback cb);
 
   void serveDirect(std::uint16_t directIncomingPort);
 
@@ -222,15 +176,6 @@ public:
                      std::string workingDir);
 
   void onionAddress(std::function<void(const std::string&)> cb);
-  
-  /* Returns the existing connection for the peer, or creates a new one */
-  PeerConnection &peerConnection(Peer &peer);
-
-  void setOnPeerConnection(peer_connection_callback peerCb);
-
-  void setOnSession(h2::server_session_callback sessionCb);
-
-  void onSession(h2::ServerSession &session);
 
   void exec();
 

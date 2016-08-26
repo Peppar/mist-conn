@@ -201,6 +201,39 @@ Peer::Peer(std::string nickname, c_unique_ptr<CERTCertificate> cert)
   : _nickname(std::move(nickname)), _cert(std::move(cert))
   {}
 
+void
+Peer::connection(std::shared_ptr<io::SSLSocket> socket,
+  ConnectionType connType, ConnectionDirection connDirection)
+{
+  if (_socket) {
+    /* TODO: Migrate to the new socket, if we accept this migration */
+    std::cerr << "New connection to peer when already connected" << std::endl;
+  }
+
+  _socket = socket;
+  if (connType == Server) {
+    /* TODO */
+    assert(!_serverSession);
+    using namespace std::placeholders;
+    _serverSession = std::make_unique<h2::ServerSession>(socket);
+    _serverSession->setOnRequest(std::bind(&Peer::onRequest, this, _1));
+  } else {
+    /* TODO */
+    assert(!_clientSession);
+    _clientSession = std::make_unique<h2::ClientSession>(socket);
+  }
+}
+
+void
+Peer::onRequest(h2::ServerRequest &request)
+{
+  auto headers = request.headers();
+  auto path = headers.find(":path");
+  if (path != headers.end()) {
+    std::cerr << "Got request for path: " << path->second.first << std::endl;
+  }
+}
+
 const std::string
 Peer::nickname() const
 {
@@ -213,28 +246,29 @@ Peer::cert() const
   return _cert.get();
 }
 
-void
-Peer::setOnionAddress(std::string onionAddress)
+const Peer::address_list&
+Peer::addresses() const
 {
-  _onionAddress = onionAddress;
-}
-
-const boost::optional<std::string> &
-Peer::onionAddress() const
-{
-  return _onionAddress;
+  return _addresses;
 }
 
 void
-Peer::setOnionPort(std::uint16_t onionPort)
+Peer::addAddress(TorAddress address)
 {
-  _onionPort = onionPort;
+  _addresses.push_back(std::move(address));
 }
 
-const boost::optional<std::uint16_t> &
-Peer::onionPort() const
+h2::ClientRequest& Peer::submit(std::string method,
+  std::string path, std::string scheme, std::string authority,
+  h2::header_map headers, h2::generator_callback cb)
 {
-  return _onionPort;
+  assert(_clientSession);
+  auto& request = _clientSession->submit(std::move(method), std::move(path),
+    std::move(scheme), std::move(authority), std::move(headers),
+    std::move(cb));
+  /* TODO: Catch NGHTTP2 NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE and
+  create a new connection */
+  return request;
 }
 
 /*
@@ -242,7 +276,8 @@ Peer::onionPort() const
  */
 namespace
 {
-std::string nicknameFromFilename(const std::string &filename)
+std::string
+nicknameFromFilename(const std::string &filename)
 {
   std::size_t pos = filename.find_last_of('.');
   if (pos == std::string::npos)
@@ -325,62 +360,6 @@ PeerDb::findByNickname(std::string nickname)
 }
 
 /*
- * PeerConnection
- */
-PeerConnection::PeerConnection(ConnectContext &context, Peer &peer)
-  : _context(context), _peer(peer)
-{
-}
-
-PeerConnection::~PeerConnection()
-{
-}
-  
-void
-PeerConnection::torConnection(std::shared_ptr<io::SSLSocket> socket)
-{
-}
-  
-void
-PeerConnection::directConnection(std::shared_ptr<io::SSLSocket> socket)
-{
-  auto sessionId = to_unique(SSL_GetSessionID(socket->fileDesc()));
-  std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
-  if (_state != State::DirectConnecting) {
-    /* We do not expect a direct connection here... */
-  }
-  
-  /* Move the socket to a new ServerSession */
-  auto session = std::make_unique<h2::ServerSession>(std::move(socket));
-  h2::ServerSession &sessionR = *session;
-  _session = std::move(session);
-  context().onSession(sessionR);
-}
-
-void 
-PeerConnection::connect()
-{
-}
-
-ConnectContext &
-PeerConnection::context() 
-{ 
-  return _context; 
-}
-
-h2::Session &
-PeerConnection::session()
-{
-  return *_session;
-}
-
-Peer &
-PeerConnection::peer()
-{ 
-  return _peer; 
-}
-
-/*
  * ConnectContext
  */
 
@@ -399,6 +378,12 @@ io::SSLContext &
 ConnectContext::sslCtx()
 {
   return _sslCtx;
+}
+
+void
+ConnectContext::addDirectory(std::string directory)
+{
+  _directories.push_back(directory);
 }
 
 boost::optional<Peer&> 
@@ -420,8 +405,8 @@ ConnectContext::handshakePeer(io::SSLSocket &socket,
                               handshake_peer_callback cb)
 {
   /* Trick to pass the authenticated peer to the handshake done callback */
-  std::shared_ptr<boost::optional<Peer&>>
-    peerRef(new boost::optional<Peer&>());
+  std::shared_ptr<boost::optional<Peer&>> peerRef
+    = std::make_shared<boost::optional<Peer&>>(boost::none);
   
   socket.handshake(
     /* Handshake done */
@@ -429,9 +414,9 @@ ConnectContext::handshakePeer(io::SSLSocket &socket,
     (boost::system::error_code ec)
   {
     if (!ec && *peerRef)
-      cb(peerConnection(**peerRef));
+      cb(**peerRef, boost::system::error_code());
     else
-      cb(ec);
+      cb(boost::none, ec);
   },
     /* Authenticate peer */
     [this, peerRef, knownPeer]
@@ -447,110 +432,109 @@ ConnectContext::handshakePeer(io::SSLSocket &socket,
 }
 
 void
-ConnectContext::connectPeerDirect(Peer &peer, PRNetAddr *addr,
-  handshake_peer_callback cb)
+ConnectContext::connectPeerDirect(Peer &peer, PRNetAddr *addr)
 {
   std::shared_ptr<io::SSLSocket> socket = _sslCtx.openSocket();
   socket->connect(addr,
-    [this, &peer, socket, cb(std::move(cb))]
+    [this, &peer, socket]
     (boost::system::error_code ec)
   {
     if (ec) {
       std::cerr << ec.message() << " while connecting to peer directly"
         << std::endl;
-      cb(ec);
-    }
-    else {
+    } else {
       std::cerr << "Connected to peer directly" << std::endl;
-      handshakePeer(*socket, peer, std::move(cb));
+      handshakePeer(*socket, peer,
+        [=, &peer]
+        (boost::optional<Peer&>, boost::system::error_code ec)
+      {
+        if (!ec) {
+          peer.connection(std::move(socket), Peer::Direct, Peer::Client);
+        } else {
+          /* Handshake failed */
+        }
+      });
     }
   });
 }
 
 void
-ConnectContext::connectPeerTor(Peer &peer, handshake_peer_callback cb)
+ConnectContext::tryConnectPeerTor(Peer &peer,
+  Peer::address_list::const_iterator it)
 {
-  std::shared_ptr<io::SSLSocket> socket = _sslCtx.openSocket();
-  _torCtrl->connect(*socket, *peer.onionAddress(), *peer.onionPort(),
-    [this, &peer, socket, cb(std::move(cb))]
-    (boost::system::error_code ec)
-  {
-    if (ec) {
-      std::cerr << ec.message() << " while connecting to peer via tor"
-        << std::endl;
-      cb(ec);
-    } else {
-      std::cerr << "Connected to peer via tor" << std::endl;
-      handshakePeer(*socket, peer, std::move(cb));
-    }
-  });
+  if (it != peer.addresses().end()) {
+    const TorAddress &address = *it;
+
+    std::shared_ptr<io::SSLSocket> socket = _sslCtx.openSocket();
+    _torCtrl->connect(*socket, address.hostname, address.port,
+      [=, &peer]
+      (boost::system::error_code ec)
+    {
+      if (!ec) {
+        std::cerr << "Connected to peer via tor" << std::endl;
+        handshakePeer(*socket, peer,
+          [=, &peer]
+          (boost::optional<Peer&>, boost::system::error_code ec)
+        {
+          if (!ec) {
+            peer.connection(std::move(socket), Peer::Tor, Peer::Client);
+          } else {
+            /* Handshake failed, try the next address */
+            tryConnectPeerTor(peer, std::next(it));
+          }
+        });
+      } else {
+        /* Connection failed, try the next address */
+        tryConnectPeerTor(peer, std::next(it));
+      }
+    });
+  } else {
+    /* All addresses tried, fail */
+    std::cerr << "Unable to connect" << std::endl;
+  }
 }
 
-void 
+void
+ConnectContext::connectPeerTor(Peer &peer)
+{
+  tryConnectPeerTor(peer, peer.addresses().begin());
+}
+
+void
 ConnectContext::incomingDirectConnection(std::shared_ptr<io::SSLSocket> socket)
 {
   std::cerr << "New direct connection!" << std::endl;
   
   handshakePeer(*socket, boost::none,
     [socket]
-    (boost::variant<PeerConnection&, boost::system::error_code> v)
+    (boost::optional<Peer&> peer, boost::system::error_code ec)
   {
-    if (v.which() == 0) {
-      auto peerConn = boost::get<PeerConnection&>(v);
-      
-      peerConn.directConnection(std::move(socket));
-    
+    if (!ec) {
+      peer->connection(std::move(socket), Peer::Direct, Peer::Server);
     } else {
       /* Handshake error, we cannot accept this connection */
-      
-      auto ec = boost::get<boost::system::error_code>(v);
       std::cerr << "Handshake error : " << ec.message() <<std::endl;
     }
   });
 }
   
-void 
+void
 ConnectContext::incomingTorConnection(std::shared_ptr<io::SSLSocket> socket)
 {
   std::cerr << "New Tor connection!" << std::endl;
   
   handshakePeer(*socket, boost::none,
     [socket]
-    (boost::variant<PeerConnection&, boost::system::error_code> v)
+    (boost::optional<Peer&> peer, boost::system::error_code ec)
   {
-    if (v.which() == 0) {
-      auto peerConn = boost::get<PeerConnection&>(v);
-      
-      peerConn.torConnection(socket);
-    
+    if (!ec) {
+      peer->connection(socket, Peer::Tor, Peer::Server);
     } else {
       /* Handshake error, we cannot accept this connection */
-      
-      auto ec = boost::get<boost::system::error_code>(v);
       std::cerr << "Handshake error : " << ec.message() <<std::endl;
       return;
     }
   });
-  
-  // sock.handshake(
-    // /* Handshake done */
-    // [=, &sock](boost::system::error_code ec)
-  // {
-    // if (ec) {
-      // /* Handshake error, we cannot accept this connection */
-      // std::cerr << "Handshake error : " << ec.message() << std::endl;
-      // return;
-    // }
-    // auto sessionId = to_unique(SSL_GetSessionID(sock.fileDesc()));
-    // std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
-
-    // onSession(makeInsertSession<ServerSession>(sock));
-  // },
-    // /* Authenticate Tor connected peer */
-    // [=, &sock](CERTCertificate *cert)
-  // {
-    // return true;
-  // });
 }
 
 void 
@@ -566,10 +550,8 @@ ConnectContext::serveDirect(std::uint16_t listenDirectPort)
 
 void
 ConnectContext::startServeTor(std::uint16_t torIncomingPort,
-                              std::uint16_t torOutgoingPort,
-                              std::uint16_t controlPort,
-                              std::string executableName,
-                              std::string workingDir)              
+  std::uint16_t torOutgoingPort, std::uint16_t controlPort,
+  std::string executableName, std::string workingDir)              
 {
   /* Serve the Tor connection port */
   {
@@ -593,40 +575,6 @@ ConnectContext::onionAddress(std::function<void(const std::string&)> cb)
   _torHiddenService->onionAddress(std::move(cb));
 }
 
-/* Returns the existing connection for the peer, or creates a new one */
-PeerConnection &
-ConnectContext::peerConnection(Peer &peer)
-{
-  auto it = _peerConnections.find(&peer);
-  
-  if (it != _peerConnections.end()) {
-    return *it->second;
-  } else {
-    auto connection = std::make_unique<PeerConnection>(*this, peer);
-    auto rv = _peerConnections.insert(std::make_pair(&peer, std::move(connection)));
-    return *(rv.first->second);
-  }
-}
-
-void
-ConnectContext::setOnPeerConnection(peer_connection_callback peerCb)
-{
-  _connectionCb = std::move(peerCb);
-}
-
-void
-ConnectContext::setOnSession(h2::server_session_callback sessionCb)
-{
-  _sessionCb = std::move(sessionCb);
-}
-  
-void 
-ConnectContext::onSession(h2::ServerSession &session)
-{
-  if (_sessionCb)
-    _sessionCb(session);
-}
-
 void 
 ConnectContext::exec()
 {
@@ -634,219 +582,3 @@ ConnectContext::exec()
 }
 
 } // namespace mist
-
-namespace
-{
-
-mist::h2::generator_callback
-make_generator(std::string body)
-{
-  std::size_t sent = 0;
-  
-  return [body, sent](std::uint8_t *data, std::size_t length,
-                      std::uint32_t *flags) mutable -> ssize_t
-  {
-    std::size_t remaining = body.size() - sent;
-    if (remaining == 0) {
-      //*flags |= NGHTTP2_DATA_FLAG_EOF;
-      return NGHTTP2_ERR_DEFERRED;
-    } else {
-      std::size_t nsend = std::min(remaining, length);
-      std::copy(body.data() + sent, body.data() + sent + nsend, data);
-      sent += nsend;
-      return nsend;
-    }
-  };
-}
-
-} // namespace
-
-int
-main(int argc, char **argv)
-{
-  //nss_init("db");
-  //try {
-    assert(argc == 5);
-    bool isServer = static_cast<bool>(atoi(argv[1]));
-    char *nickname = argv[2];
-    boost::filesystem::path rootDir(argv[3]);
-    boost::filesystem::path torPath(argv[4]);
-    
-    mist::io::IOContext ioCtx;
-    mist::io::SSLContext sslCtx(ioCtx, (rootDir / "key_db").string(), nickname);
-    mist::ConnectContext ctx(sslCtx, (rootDir / "peers").string());
-    
-    /*ioCtx.queueJob([]() {
-      while (1) {
-        std::cerr << "I am job number one!" << std::endl;
-        PR_Sleep(PR_MillisecondsToInterval(1000));
-      }
-    });*/
-    ctx.serveDirect(
-      isServer ? 8250 : 6483); // Direct incoming port
-    ctx.startServeTor(
-      isServer ? 8148 : 6480, // Tor incoming port
-      isServer ? 8158 : 6481, // Tor outgoing port
-      isServer ? 8190 : 6482, // Control port
-      torPath.string(),
-      //"C:\\Users\\Oskar\\Desktop\\Tor\\Browser\\TorBrowser\\Tor\\tor.exe",
-      //"C:\\Users\\Oskar\\Desktop\\Tor\\Browser\\TorBrowser\\Tor");
-      rootDir.string());
-    //ctx.externalTor(isServer ? 9158 : 7159);
-    ctx.onionAddress(
-      [&ctx](const std::string &addr)
-    {
-      std::cerr << "Onion address is " << addr << std::endl;
-      mist::Peer &peer = *ctx.findPeerByName("myself");
-      peer.setOnionAddress(addr);
-      peer.setOnionPort(443);
-    });
-    ctx.setOnSession(
-      [=](mist::h2::ServerSession &session)
-    {
-      std::cerr << "Server onSession" << std::endl;
-      session.setOnRequest(
-        [=, &session](mist::h2::ServerRequest &request)
-      {
-        request.stream().setOnClose(
-          [](boost::system::error_code ec)
-        {
-          std::cerr << "Server stream closed! " << ec.message() << std::endl;
-        });
-        std::cerr << "New request!" << std::endl;
-        
-        mist::h2::header_map headers
-        {
-          {"accept", {"*/*", false}},
-          {"accept-encoding", {"gzip, deflate", false}},
-          {"user-agent", {"nghttp2/" NGHTTP2_VERSION, false}},
-        };
-        request.stream().submit(404, std::move(headers),
-          make_generator("Hej!!"));
-      });
-    });
-    /*
-    sslCtx.serve(port,
-      [](mist::Socket &sock)
-    {
-      std::cerr << "New connection !!! " << std::endl;
-      sock.handshake(
-        [&sock](boost::system::error_code ec)
-      {
-        if (ec) {
-          std::cerr << "Error!!!" << std::endl;
-          return;
-        }
-        std::cerr << "Handshaked! " << std::endl;
-        auto sessionId = to_unique(SSL_GetSessionID(sock.fileDesc()));
-        std::cerr << "Session ID = " << to_hex(sessionId.get()) << std::endl;
-        const uint8_t *data = (const uint8_t *)"Hus";
-        sock.write(data, 3);
-        sock.read(
-          [&sock](const uint8_t *data, std::size_t length, boost::system::error_code ec)
-        {
-          if (ec)
-            std::cerr << "Read error!!!" << std::endl;
-          std::cerr << "Server received " << std::string((const char*)data, length) << std::endl;
-        });
-      });
-    });
-    */
-    if (!isServer) {
-      // Try connect
-      PRNetAddr addr;
-      
-      //if (PR_StringToNetAddr(
-      //  "130.211.116.44",
-      //  &addr) != PR_SUCCESS)
-      //  throw new std::runtime_error("PR_InitializeNetAddr failed");
-      //addr.inet.port = PR_htons(443);
-      //if (PR_InitializeNetAddr(PR_IpAddrLoopback, 9150, &addr) != PR_SUCCESS)
-      //  throw new std::runtime_error("PR_InitializeNetAddr failed");
-    
-      //mist::Socket &sock = sslCtx.openClientSocket();
-      
-      ioCtx.setTimeout(20000,
-        [&ctx]()
-      {
-        std::cerr << "Trying to connect..." << std::endl;
-        mist::Peer &peer = *ctx.findPeerByName("myself");
-        ctx.connectPeerTor(peer,
-          [&ctx](boost::variant<mist::PeerConnection&, boost::system::error_code> result)
-        {
-          if (result.which() == 0) {
-            auto peerConn = boost::get<mist::PeerConnection&>(result);
-            std::cerr << "Connection successful!" << std::endl;
-            // session.setOnError(
-            // [&session](boost::system::error_code ec)
-            // {
-            // std::cerr << "Session error!!" << ec.message() << std::endl;
-            // });
-
-            // boost::system::error_code ec;
-            // mist::h2::header_map headers
-            // {
-            // {"accept", {"*/*", false}},
-            // {"accept-encoding", {"gzip, deflate", false}},
-            // {"user-agent", {"nghttp2/" NGHTTP2_VERSION, false}},
-            // };
-            // auto req = session.submit(ec, "GET", "/", "https", "www.hej.os",
-            // headers);
-            // if (ec)
-            // std::cerr << ec.message() << std::endl;
-            // if (!req) {
-            // std::cerr << "Could not submit" << std::endl;
-            // return;
-            // }
-            // std::cerr << "Submitted" << std::endl;
-
-            // mist::h2::ClientRequest &request = req.get();
-
-            // request.stream().setOnClose(
-            // [](boost::system::error_code ec)
-            // {
-            // std::cerr << "Client stream closed! " << ec.message() << std::endl;
-            // });
-
-            // request.setOnResponse(
-            // [&request, &session]
-            // (mist::h2::ClientResponse &response)
-            // {
-            // std::cerr << "Got response!" << std::endl;
-
-            // response.setOnData(
-            // [&response, &session]
-            // (const std::uint8_t *data, std::size_t length)
-            // {
-            // for (auto &kv : response.headers()) {
-            // std::cerr << kv.first << ", " << kv.second.first << std::endl;
-            // }
-            // std::cerr << "Got data of length " << length << std::endl;
-            // std::cerr << std::string(reinterpret_cast<const char*>(data), length) << std::endl;
-            // });
-            // });
-          }
-          else {
-            auto ec = boost::get<boost::system::error_code>(result);
-            std::cerr << "Error when connecting " << ec.message() << std::endl;
-          }
-        });
-      });
-    }
-
-    ctx.exec();
-    //ventLoop(port, nickname, isServer ? 0 : 9150);
-    //auto cert = createRootCert(privk, pubk, hashAlgTag, );
-    // if (isServer) {
-      // std::cerr << "Server" << std::endl;
-      // server(nickname);
-    // } else {
-      // std::cerr << "Client" << std::endl;
-      // client(nickname);
-    // }
-  //} catch(boost::exception &) {
-  //  std::cerr
-  //    << "Unexpected exception, diagnostic information follows:" << std::endl
-  //    << boost::current_exception_diagnostic_information();
-  //}
-}

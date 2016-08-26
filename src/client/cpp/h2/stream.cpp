@@ -1,5 +1,9 @@
 #include <cstddef>
 
+#include <boost/system/error_code.hpp>
+#include <boost/system/system_error.hpp>
+#include <boost/throw_exception.hpp>
+
 #include <nghttp2/nghttp2.h>
 
 #include "h2/session.hpp"
@@ -217,7 +221,7 @@ ClientStream::onStreamClose(std::uint32_t errorCode)
   return 0;
 }
 
-boost::system::error_code
+void
 ClientStream::submit(std::string method,
                      std::string path,
                      std::string scheme,
@@ -261,14 +265,16 @@ ClientStream::submit(std::string method,
                                                    nullptr,
                                                    nvs.data(), nvs.size(),
                                                    prdptr, this);
-    if (streamId < 0) {
-      return make_nghttp2_error(streamId);
-    }
+    if (streamId < 0)
+      BOOST_THROW_EXCEPTION(boost::system::system_error(
+        make_nghttp2_error(streamId), "Unable to submit request"));
 
     setStreamId(streamId);
+
+#ifdef _DEBUG
+    /* TODO: For testing, randomly throw NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE */
+#endif
   }
-  
-  return boost::system::error_code();
 }
 
 void
@@ -299,7 +305,7 @@ ServerStream::response()
   return _response;
 }
 
-boost::system::error_code
+void
 ServerStream::submit(std::uint16_t statusCode,
                      header_map headers,
                      generator_callback cb)
@@ -335,12 +341,14 @@ ServerStream::submit(std::uint16_t statusCode,
   {
     auto rv = nghttp2_submit_response(nghttp2Session(), streamId(),
                                       nvs.data(), nvs.size(), prdptr);
-    if (rv) {
-      return make_nghttp2_error(rv);
-    }
+    if (rv)
+      BOOST_THROW_EXCEPTION(boost::system::system_error(
+        make_nghttp2_error(rv), "Unable to submit response"));
+
+#ifdef _DEBUG
+    /* TODO: For testing, randomly throw NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE */
+#endif
   }
-  
-  return boost::system::error_code();
 }
 
 int

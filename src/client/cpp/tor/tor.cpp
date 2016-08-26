@@ -579,11 +579,14 @@ handshakeSOCKS5(mist::io::Socket &sock,
           + to_hex(data[11]) + to_hex(data[12]) + ':'
           + to_hex(data[13]) + to_hex(data[14]) + ':'
           + std::to_string((data[15] << 8) | data[16]);
+        else {
+          cb("", mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
+          return;
+        }
         assert(address.length());
         if (!success) {
           cb(address, mist::make_mist_error(mist::MIST_ERR_SOCKS_HANDSHAKE));
-        }
-        else {
+        } else {
           cb(address, boost::system::error_code());
         }
       });

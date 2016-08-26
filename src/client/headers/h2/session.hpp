@@ -179,15 +179,11 @@ protected:
 public:
 
   ClientSession(std::shared_ptr<io::SSLSocket> socket);
-  
-  boost::optional<ClientRequest&>
-  submit(boost::system::error_code &ec,
-         std::string method,
-         std::string path,
-         std::string scheme,
-         std::string authority,
-         header_map headers,
-         generator_callback cb = nullptr);
+
+  ClientRequest&
+  submit(std::string method, std::string path, std::string scheme,
+    std::string authority, header_map headers,
+    generator_callback cb = nullptr);
 
 };
 

@@ -332,25 +332,16 @@ ClientSession::ClientSession(std::shared_ptr<io::SSLSocket> socket)
   start();
 }
 
-boost::optional<ClientRequest&>
-ClientSession::submit(boost::system::error_code &ec,
-                      std::string method,
-                      std::string path,
-                      std::string scheme,
-                      std::string authority,
-                      header_map headers,
-                      generator_callback cb)
+ClientRequest&
+ClientSession::submit(std::string method, std::string path, std::string scheme,
+  std::string authority, header_map headers, generator_callback cb)
 {
   auto strm = std::make_unique<ClientStream>(*this);
-  ec = strm->submit(method, path, scheme, authority, std::move(headers),
+  strm->submit(method, path, scheme, authority, std::move(headers),
                     std::move(cb));
-  if (ec) {
-    return boost::none;
-  } else {
-    ClientRequest &request = insertStream(std::move(strm)).request();
-    write();
-    return request;
-  }
+  ClientRequest &request = insertStream(std::move(strm)).request();
+  write();
+  return request;
 }
 
 int

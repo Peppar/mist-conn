@@ -54,9 +54,6 @@
     <ClCompile Include="src\client\cpp\io\ssl_socket.cpp">
       <Filter>Source Files\io</Filter>
     </ClCompile>
-    <ClCompile Include="src\client\cpp\io\file_descriptor.cpp">
-      <Filter>Source Files\io</Filter>
-    </ClCompile>
     <ClCompile Include="src\client\cpp\io\io_context.cpp">
       <Filter>Source Files\io</Filter>
     </ClCompile>
@@ -99,6 +96,9 @@
     <ClCompile Include="src\client\cpp\h2\client_response.cpp">
       <Filter>Source Files\h2</Filter>
     </ClCompile>
+    <ClCompile Include="src\client\cpp\test.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\client\headers\conn.hpp">
@@ -117,9 +117,6 @@
       <Filter>Header Files\io</Filter>
     </ClInclude>
     <ClInclude Include="src\client\headers\io\ssl_socket.hpp">
-      <Filter>Header Files\io</Filter>
-    </ClInclude>
-    <ClInclude Include="src\client\headers\io\file.hpp">
       <Filter>Header Files\io</Filter>
     </ClInclude>
     <ClInclude Include="src\client\headers\io\file_descriptor.hpp">
