@@ -61,7 +61,7 @@ TorHiddenService::tryGetOnionAddress()
     std::size_t nread = 0;
     
     while (1) {
-      std::size_t n
+      auto n
         = PR_Read(inFile.get(), reinterpret_cast<void*>(buf.data() + nread),
                   buf.size() - nread);
       if (n < 0) {
