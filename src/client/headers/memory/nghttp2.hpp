@@ -25,4 +25,14 @@ struct c_deleter<nghttp2_session_callbacks>
   }
 };
 
+template<>
+struct c_deleter<nghttp2_option>
+{
+  using type = void(*)(nghttp2_option*);
+  static void del(nghttp2_option *ptr)
+  {
+    nghttp2_option_del(ptr);
+  }
+};
+
 #endif

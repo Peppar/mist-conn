@@ -12,7 +12,7 @@
 #include "memory/nss.hpp"
 
 #include "io/file_descriptor.hpp"
-#include "io/socket.hpp"
+#include "io/tcp_socket.hpp"
 
 namespace mist
 {
@@ -65,7 +65,7 @@ public:
 
   void signal();
 
-  std::shared_ptr<Socket> openSocket();
+  std::shared_ptr<TCPSocket> openSocket();
 
 };
 

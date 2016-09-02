@@ -22,4 +22,7 @@ $(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
     <LocalDebuggerCommandArguments>0 mist_root "C:\Users\Oskar\Documents\mist-share\mist-conn\root" "C:\Users\Oskar\Desktop\Tor Browser\Browser\TorBrowser\Tor\tor.exe" </LocalDebuggerCommandArguments>
   </PropertyGroup>
+  <PropertyGroup>
+    <ShowAllFiles>true</ShowAllFiles>
+  </PropertyGroup>
 </Project>

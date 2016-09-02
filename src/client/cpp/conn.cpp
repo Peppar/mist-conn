@@ -29,6 +29,7 @@
 #include "h2/client_response.hpp"
 #include "h2/server_request.hpp"
 #include "h2/server_response.hpp"
+#include "h2/websocket.hpp"
 
 #include <base64.h>
 #include <nss.h>
@@ -191,18 +192,20 @@ certPubKeyHash(CERTCertificate *cert)
   auto pubKey = to_unique(CERT_ExtractPublicKey(cert));
   return pubKeyHash(pubKey.get());
 }
-}
+
+} // namespace
 
 /*
  * Peer
  */
 
-Peer::Peer(std::string nickname, c_unique_ptr<CERTCertificate> cert)
-  : _nickname(std::move(nickname)), _cert(std::move(cert))
+Peer::Peer(ConnectContext &ctx, std::string nickname,
+  c_unique_ptr<CERTCertificate> cert)
+  : _ctx(ctx), _nickname(std::move(nickname)), _cert(std::move(cert))
   {}
 
 void
-Peer::connection(std::shared_ptr<io::SSLSocket> socket,
+Peer::connection(std::shared_ptr<io::Socket> socket,
   ConnectionType connType, ConnectionDirection connDirection)
 {
   if (_socket) {
@@ -211,28 +214,58 @@ Peer::connection(std::shared_ptr<io::SSLSocket> socket,
   }
 
   _socket = socket;
-  if (connType == Server) {
+  if (connDirection == ConnectionDirection::Server) {
     /* TODO */
     assert(!_serverSession);
     using namespace std::placeholders;
-    _serverSession = std::make_unique<h2::ServerSession>(socket);
-    _serverSession->setOnRequest(std::bind(&Peer::onRequest, this, _1));
+    _serverSession = std::make_shared<h2::ServerSession>(socket);
+    _serverSession->setOnRequest(std::bind(&ConnectContext::onPeerRequest,
+      &_ctx, std::ref(*this), _1));
   } else {
     /* TODO */
     assert(!_clientSession);
-    _clientSession = std::make_unique<h2::ClientSession>(socket);
+    _clientSession = std::make_shared<h2::ClientSession>(socket);
+    _ctx.initializeReverseConnection(*this);
+
+    _ctx.onPeerConnectionStatus(*this, ConnectionStatus::Connected);
   }
 }
 
 void
+Peer::reverseConnection(std::shared_ptr<io::Socket> socket,
+  ConnectionDirection connDirection)
+{
+  if (connDirection == ConnectionDirection::Server) {
+    using namespace std::placeholders;
+    _reverseServerSession = std::make_shared<h2::ServerSession>(socket);
+    _reverseServerSession->setOnRequest(std::bind(&ConnectContext::onPeerRequest,
+      &_ctx, std::ref(*this), _1));
+  } else {
+    _reverseClientSession = std::make_shared<h2::ClientSession>(socket);
+    _ctx.onPeerConnectionStatus(*this, ConnectionStatus::Connected);
+  }
+}
+
+/*
+void
 Peer::onRequest(h2::ServerRequest &request)
 {
   auto headers = request.headers();
-  auto path = headers.find(":path");
-  if (path != headers.end()) {
+  auto pathIt = headers.find(":path");
+  if (pathIt != headers.end()) {
+    const std::string &path = pathIt->second.first;
+    auto slashPos = path.find_first_of('/');
+    if (slashPos == std::string::npos) {
+      // No slash found
+      ;
+    } else {
+      std::string service = path.substr(0, slashPos);
+      std::string subPath = path.substr(slashPos + 1);
+      _ctx.peerRequest(*this, service, subPath);
+    }
     std::cerr << "Got request for path: " << path->second.first << std::endl;
   }
-}
+}*/
 
 const std::string
 Peer::nickname() const
@@ -258,6 +291,14 @@ Peer::addAddress(TorAddress address)
   _addresses.push_back(std::move(address));
 }
 
+h2::ClientSession&
+Peer::clientSession()
+{
+  assert(_clientSession || _reverseClientSession);
+  return _clientSession ? *_clientSession : *_reverseClientSession;
+}
+
+/*
 h2::ClientRequest& Peer::submit(std::string method,
   std::string path, std::string scheme, std::string authority,
   h2::header_map headers, h2::generator_callback cb)
@@ -266,10 +307,10 @@ h2::ClientRequest& Peer::submit(std::string method,
   auto& request = _clientSession->submit(std::move(method), std::move(path),
     std::move(scheme), std::move(authority), std::move(headers),
     std::move(cb));
-  /* TODO: Catch NGHTTP2 NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE and
-  create a new connection */
+  // TODO: Catch NGHTTP2 NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE and
+  // create a new connection
   return request;
-}
+}*/
 
 /*
  * PeerDb
@@ -286,7 +327,7 @@ nicknameFromFilename(const std::string &filename)
 }
 } // namespace
 
-PeerDb::PeerDb(const std::string &directory)
+PeerDb::PeerDb(ConnectContext &ctx, const std::string &directory)
 {
   /* Open the peer directory */
   auto dir = to_unique(PR_OpenDir(directory.c_str()));
@@ -328,7 +369,7 @@ PeerDb::PeerDb(const std::string &directory)
     std::cerr << "Added peer " << nickname << " with key hash " << to_hex(keyHash) << std::endl;
 
     peers.insert(std::make_pair(keyHash,
-                                std::make_unique<Peer>(nickname,
+                                std::make_unique<Peer>(ctx, nickname,
                                                        std::move(cert))));
   }
   if (PR_GetError() != PR_NO_MORE_FILES_ERROR) {
@@ -365,7 +406,7 @@ PeerDb::findByNickname(std::string nickname)
 
 ConnectContext::ConnectContext(io::SSLContext &sslCtx,
                                std::string peerdir)
-  : _sslCtx(sslCtx), _peerDb(std::move(peerdir))
+  : _sslCtx(sslCtx), _peerDb(*this, std::move(peerdir))
   {}
 
 io::IOContext &
@@ -449,7 +490,8 @@ ConnectContext::connectPeerDirect(Peer &peer, PRNetAddr *addr)
         (boost::optional<Peer&>, boost::system::error_code ec)
       {
         if (!ec) {
-          peer.connection(std::move(socket), Peer::Direct, Peer::Client);
+          peer.connection(std::move(socket), Peer::ConnectionType::Direct,
+            Peer::ConnectionDirection::Client);
         } else {
           /* Handshake failed */
         }
@@ -460,7 +502,7 @@ ConnectContext::connectPeerDirect(Peer &peer, PRNetAddr *addr)
 
 void
 ConnectContext::tryConnectPeerTor(Peer &peer,
-  Peer::address_list::const_iterator it)
+                                  Peer::address_list::const_iterator it)
 {
   if (it != peer.addresses().end()) {
     const TorAddress &address = *it;
@@ -477,7 +519,8 @@ ConnectContext::tryConnectPeerTor(Peer &peer,
           (boost::optional<Peer&>, boost::system::error_code ec)
         {
           if (!ec) {
-            peer.connection(std::move(socket), Peer::Tor, Peer::Client);
+            peer.connection(std::move(socket), Peer::ConnectionType::Tor,
+              Peer::ConnectionDirection::Client);
           } else {
             /* Handshake failed, try the next address */
             tryConnectPeerTor(peer, std::next(it));
@@ -510,7 +553,8 @@ ConnectContext::incomingDirectConnection(std::shared_ptr<io::SSLSocket> socket)
     (boost::optional<Peer&> peer, boost::system::error_code ec)
   {
     if (!ec) {
-      peer->connection(std::move(socket), Peer::Direct, Peer::Server);
+      peer->connection(std::move(socket), Peer::ConnectionType::Direct,
+        Peer::ConnectionDirection::Server);
     } else {
       /* Handshake error, we cannot accept this connection */
       std::cerr << "Handshake error : " << ec.message() <<std::endl;
@@ -528,7 +572,8 @@ ConnectContext::incomingTorConnection(std::shared_ptr<io::SSLSocket> socket)
     (boost::optional<Peer&> peer, boost::system::error_code ec)
   {
     if (!ec) {
-      peer->connection(socket, Peer::Tor, Peer::Server);
+      peer->connection(socket, Peer::ConnectionType::Tor,
+        Peer::ConnectionDirection::Server);
     } else {
       /* Handshake error, we cannot accept this connection */
       std::cerr << "Handshake error : " << ec.message() <<std::endl;
@@ -551,7 +596,7 @@ ConnectContext::serveDirect(std::uint16_t listenDirectPort)
 void
 ConnectContext::startServeTor(std::uint16_t torIncomingPort,
   std::uint16_t torOutgoingPort, std::uint16_t controlPort,
-  std::string executableName, std::string workingDir)              
+  std::string executableName, std::string workingDir)
 {
   /* Serve the Tor connection port */
   {
@@ -562,7 +607,8 @@ ConnectContext::startServeTor(std::uint16_t torIncomingPort,
 
   /* Start Tor */
   {
-    _torCtrl = std::make_shared<tor::TorController>(ioCtx(), executableName, workingDir);
+    _torCtrl = std::make_shared<tor::TorController>(ioCtx(), executableName,
+      workingDir);
     _torHiddenService
       = _torCtrl->addHiddenService(torIncomingPort, "mist-service");
     _torCtrl->start(torOutgoingPort, controlPort);
@@ -575,10 +621,178 @@ ConnectContext::onionAddress(std::function<void(const std::string&)> cb)
   _torHiddenService->onionAddress(std::move(cb));
 }
 
-void 
+void
 ConnectContext::exec()
 {
   ioCtx().exec();
+}
+
+std::shared_ptr<Service> ConnectContext::newService(std::string name)
+{
+  auto service = std::make_shared<Service>(*this, name);
+  auto it = _services.emplace(std::make_pair(name, service));
+  assert(it.second); // Assert insertion
+  return service;
+}
+
+void ConnectContext::onPeerRequest(Peer & peer,
+                                   h2::ServerRequest & request)
+{
+  if (!request.path() || !request.scheme()) {
+    request.stream().close(boost::system::error_code());
+    return;
+  }
+
+  auto& path = *request.path();
+  auto& scheme = *request.scheme();
+
+  assert(path[0] == '/');
+  if (path == "/") {
+    // Root
+  } else if (path == "/mist/reverse") {
+    if (scheme == "wss") {
+      auto websocket
+        = std::make_shared<mist::h2::ServerWebSocket>();
+      websocket->start(request);
+      peer.reverseConnection(websocket,
+        mist::Peer::ConnectionDirection::Client);
+    } else {
+      std::cerr << "Unrecognized reciprocal scheme " << scheme << std::endl;
+      request.stream().close(boost::system::error_code());
+    }
+  } else {
+    auto slashPos = path.find_first_of('/', 1);
+    std::string rootDirName;
+    if (slashPos == std::string::npos) {
+      rootDirName = path.substr(1);
+    } else {
+      rootDirName = path.substr(1, slashPos - 1);
+    }
+
+    // TODO: Check root dir name for special stuff
+
+    {
+      auto serviceIt = _services.find(rootDirName);
+      if (serviceIt != _services.end()) {
+        std::string subPath = path.substr(slashPos + 1);
+        if (scheme == "https") {
+          serviceIt->second->onRequest(peer, request, subPath);
+        } else if (scheme == "wss") {
+          auto websocket
+            = std::make_shared<mist::h2::ServerWebSocket>();
+          websocket->start(request);
+          serviceIt->second->onWebSocket(peer, subPath, websocket);
+        } else {
+          std::cerr << "Unrecognized scheme " << scheme << std::endl;
+          request.stream().close(boost::system::error_code());
+        }
+      }
+    }
+  }
+}
+
+void ConnectContext::initializeReverseConnection(Peer & peer)
+{
+  assert(peer._clientSession);
+  auto websocket = std::make_shared<h2::ClientWebSocket>();
+  websocket->start(*peer._clientSession, "mist", "https://mist",
+    "/mist/reverse");
+  peer.reverseConnection(websocket, mist::Peer::ConnectionDirection::Server);
+}
+
+void ConnectContext::onPeerConnectionStatus(Peer & peer,
+  Peer::ConnectionStatus status)
+{
+  for (auto& service : _services) {
+    service.second->onStatus(peer, status);
+  }
+}
+
+void
+ConnectContext::serviceSubmit(Service &service, Peer &peer,
+  std::string method, std::string path, Service::peer_submit_callback cb)
+{
+  mist::h2::ClientSession &session = peer.clientSession();
+
+  auto& request = session.submit(std::move(method),
+    "/" + service._name + "/" + path, "https", "mist", mist::h2::header_map());
+  cb(peer, request);
+}
+
+void
+ConnectContext::serviceOpenWebSocket(Service &service, Peer &peer,
+  std::string path, Service::peer_websocket_callback cb)
+{
+  mist::h2::ClientSession &session = peer.clientSession();
+
+  auto websocket = std::make_shared<h2::ClientWebSocket>();
+  websocket->start(session, "mist", "https://mist",
+    "/" + service._name + "/" + path);
+  cb(peer, path, websocket);
+}
+
+/*
+ * Service
+ */
+Service::Service(ConnectContext &ctx, std::string name)
+  : _ctx(ctx), _name(name)
+{
+}
+
+void
+Service::setOnPeerConnectionStatus(peer_connection_status_callback cb)
+{
+  _onStatus = std::move(cb);
+}
+
+void
+Service::onStatus(Peer &peer, Peer::ConnectionStatus status)
+{
+  if (_onStatus)
+    _onStatus(peer, status);
+}
+
+void
+Service::setOnPeerRequest(peer_request_callback cb)
+{
+  _onRequest = std::move(cb);
+}
+
+void
+Service::onRequest(Peer &peer, h2::ServerRequest &request,
+  std::string subPath)
+{
+  if (_onRequest)
+    _onRequest(peer, request, subPath);
+}
+
+void
+Service::submit(Peer &peer, std::string method, std::string path,
+  peer_submit_callback cb)
+{
+  _ctx.serviceSubmit(*this, peer, std::move(method), std::move(path),
+    std::move(cb));
+}
+
+void
+Service::openWebSocket(Peer &peer, std::string path,
+  peer_websocket_callback cb)
+{
+  _ctx.serviceOpenWebSocket(*this, peer, std::move(path), std::move(cb));
+}
+
+void
+Service::setOnWebSocket(peer_websocket_callback cb)
+{
+  _onWebSocket = std::move(cb);
+}
+
+void
+Service::onWebSocket(Peer &peer, std::string path,
+  std::shared_ptr<io::Socket> socket)
+{
+  if (_onWebSocket)
+    _onWebSocket(peer, std::move(path), std::move(socket));
 }
 
 } // namespace mist

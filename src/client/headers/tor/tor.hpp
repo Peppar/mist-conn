@@ -69,7 +69,7 @@ private:
 
   std::vector<std::string> _bridges;
 
-  std::shared_ptr<io::Socket> _ctrlSocket;
+  std::shared_ptr<io::TCPSocket> _ctrlSocket;
   std::string _pendingResponse;
 
   void runTorProcess(std::vector<std::string> processArgs,
@@ -100,7 +100,7 @@ public:
   /* Connect the given socket to the given hostname and port using the
   Tor SOCKS proxy*/
   using connect_callback = std::function<void(boost::system::error_code)>;
-  void connect(io::Socket &socket, std::string hostname, std::uint16_t port,
+  void connect(io::TCPSocket &socket, std::string hostname, std::uint16_t port,
     connect_callback cb);
   
 };

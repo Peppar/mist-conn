@@ -14,7 +14,7 @@ namespace h2
 class ClientResponse;
 class ClientStream;
 
-class ClientRequest : public Lane
+class ClientRequest : public RequestLane
 {
 private:
 

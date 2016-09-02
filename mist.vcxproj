@@ -174,9 +174,10 @@
     <ClCompile Include="src\client\cpp\h2\session.cpp" />
     <ClCompile Include="src\client\cpp\h2\stream.cpp" />
     <ClCompile Include="src\client\cpp\h2\util.cpp" />
+    <ClCompile Include="src\client\cpp\h2\websocket.cpp" />
     <ClCompile Include="src\client\cpp\io\io_context.cpp" />
     <ClCompile Include="src\client\cpp\io\rdv_socket.cpp" />
-    <ClCompile Include="src\client\cpp\io\socket.cpp" />
+    <ClCompile Include="src\client\cpp\io\tcp_socket.cpp" />
     <ClCompile Include="src\client\cpp\io\ssl_context.cpp" />
     <ClCompile Include="src\client\cpp\io\ssl_socket.cpp" />
     <ClCompile Include="src\client\cpp\test.cpp" />
@@ -194,12 +195,14 @@
     <ClInclude Include="src\client\headers\h2\server_response.hpp" />
     <ClInclude Include="src\client\headers\h2\session.hpp" />
     <ClInclude Include="src\client\headers\h2\stream.hpp" />
+    <ClInclude Include="src\client\headers\h2\websocket.hpp" />
     <ClInclude Include="src\client\headers\h2\types.hpp" />
     <ClInclude Include="src\client\headers\h2\util.hpp" />
     <ClInclude Include="src\client\headers\io\file_descriptor.hpp" />
     <ClInclude Include="src\client\headers\io\io_context.hpp" />
     <ClInclude Include="src\client\headers\io\rdv_socket.hpp" />
     <ClInclude Include="src\client\headers\io\socket.hpp" />
+    <ClInclude Include="src\client\headers\io\tcp_socket.hpp" />
     <ClInclude Include="src\client\headers\io\ssl_context.hpp" />
     <ClInclude Include="src\client\headers\io\ssl_socket.hpp" />
     <ClInclude Include="src\client\headers\memory\base.hpp" />

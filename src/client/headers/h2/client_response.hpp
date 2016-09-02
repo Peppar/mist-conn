@@ -13,7 +13,7 @@ namespace h2
 
 class ClientStream;
 
-class ClientResponse : public Lane
+class ClientResponse : public ResponseLane
 {
 private:
 

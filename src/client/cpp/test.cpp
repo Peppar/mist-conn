@@ -162,6 +162,74 @@ main(int argc, char **argv)
   });
   });
   */
+
+  auto service = ctx.newService("chat");
+
+  service->setOnPeerConnectionStatus(
+    [service](mist::Peer &peer, mist::Peer::ConnectionStatus status)
+  {
+    std::cerr << "On peer connection status" << std::endl;
+    if (status == mist::Peer::ConnectionStatus::Connected) {
+
+      //service->submit(peer, "GET", "hej",
+      //  [service](mist::Peer &peer, mist::h2::ClientRequest &request)
+      //{
+      //  std::cerr << "Service could connect to peer!" << std::endl;
+      //  request.setOnResponse(
+      //    [](mist::h2::ClientResponse &response)
+      //  {
+      //    std::cerr << "On peer response : " << *response.statusCode() << std::endl;
+      //    for (auto& header : response.headers()) {
+      //      std::cerr << "Header " << header.first << " = " << header.second.first << std::endl;
+      //    }
+      //  });
+      //});
+      service->openWebSocket(peer, "hoj",
+        [](mist::Peer &peer, std::string path, std::shared_ptr<mist::io::Socket> socket)
+      {
+        std::cerr << "Opened websocket" << std::endl;
+
+        socket->read([socket](const std::uint8_t *data, std::size_t length, boost::system::error_code ec)
+        {
+          std::cerr << "Client got data from websocket:"
+            << std::string(reinterpret_cast<const char*>(data), length)
+            << std::endl;
+        });
+
+        const char *myData = "Hejsan hojsan";
+        socket->write(reinterpret_cast<const std::uint8_t*>(myData), 13);
+      });
+    }
+  });
+
+  service->setOnPeerRequest(
+    [service](const mist::Peer &peer, mist::h2::ServerRequest &request,
+      std::string subPath)
+  {
+    std::cerr << "On peer request" << std::endl;
+    for (auto& header : request.headers()) {
+      std::cerr << "Header " << header.first << " = " << header.second.first << std::endl;
+    }
+    request.stream().submit(200, mist::h2::header_map(), nullptr);
+  });
+
+  service->setOnWebSocket(
+    [service](const mist::Peer &peer, std::string path,
+       std::shared_ptr<mist::io::Socket> socket)
+  {
+    std::cerr << "On websocket" << std::endl;
+
+    socket->read([socket](const std::uint8_t *data, std::size_t length, boost::system::error_code ec)
+    {
+      std::cerr << "Server got data from websocket:"
+        << std::string(reinterpret_cast<const char*>(data), length)
+        << std::endl;
+    });
+
+    const char *myData = "Mossan korven";
+    socket->write(reinterpret_cast<const std::uint8_t*>(myData), 13);
+  });
+
   if (!isServer) {
     // Try connect
 
@@ -174,7 +242,7 @@ main(int argc, char **argv)
     //  throw new std::runtime_error("PR_InitializeNetAddr failed");
 
     //mist::Socket &sock = sslCtx.openClientSocket();
-    ioCtx.setTimeout(20000,
+    ioCtx.setTimeout(10000,
       [=, &ctx]()
     {
       PRNetAddr addr;

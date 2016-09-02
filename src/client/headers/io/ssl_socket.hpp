@@ -9,7 +9,7 @@
 #include <boost/optional.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "io/socket.hpp"
+#include "io/tcp_socket.hpp"
 #include "io/io_context.hpp"
 #include "io/ssl_context.hpp"
 #include "memory/nss.hpp"
@@ -21,7 +21,7 @@ namespace io
 
 class SSLContext;
 
-class SSLSocket : public Socket
+class SSLSocket : public TCPSocket
 {
 public:
 
