@@ -128,66 +128,109 @@ loser:
 SECStatus
 SECU_ReadDERFromFile(SECItem *der, PRFileDesc *inFile, PRBool ascii)
 {
-    SECStatus rv;
-    if (ascii) {
-        /* First convert ascii to binary */
-        SECItem filedata;
-        char *asc, *body;
+  SECStatus rv;
+  if (ascii) {
+    /* First convert ascii to binary */
+    SECItem filedata;
+    char *asc, *body;
 
-        /* Read in ascii data */
-        rv = SECU_FileToItem(&filedata, inFile);
-        asc = (char *)filedata.data;
-        if (!asc) {
-            fprintf(stderr, "unable to read data from input file\n");
-            return SECFailure;
-        }
-
-        /* check for headers and trailers and remove them */
-        if ((body = strstr(asc, "-----BEGIN")) != NULL) {
-            char *trailer = NULL;
-            asc = body;
-            body = PORT_Strchr(body, '\n');
-            if (!body)
-                body = PORT_Strchr(asc, '\r'); /* maybe this is a MAC file */
-            if (body)
-                trailer = strstr(++body, "-----END");
-            if (trailer != NULL) {
-                *trailer = '\0';
-            } else {
-                fprintf(stderr, "input has header but no trailer\n");
-                PORT_Free(filedata.data);
-                return SECFailure;
-            }
-        } else {
-            body = asc;
-        }
-     
-        /* Convert to binary */
-        rv = ATOB_ConvertAsciiToItem(der, body);
-        if (rv) {
-            return SECFailure;
-        }
-
-        PORT_Free(filedata.data);
-    } else {
-        /* Read in binary der */
-        rv = SECU_FileToItem(der, inFile);
-        if (rv) {
-            return SECFailure;
-        }
+    /* Read in ascii data */
+    rv = SECU_FileToItem(&filedata, inFile);
+    asc = (char *)filedata.data;
+    if (!asc) {
+      fprintf(stderr, "unable to read data from input file\n");
+      return SECFailure;
     }
-    return SECSuccess;
+
+    /* check for headers and trailers and remove them */
+    if ((body = strstr(asc, "-----BEGIN")) != NULL) {
+      char *trailer = NULL;
+      asc = body;
+      body = PORT_Strchr(body, '\n');
+      if (!body)
+        body = PORT_Strchr(asc, '\r'); /* maybe this is a MAC file */
+      if (body)
+        trailer = strstr(++body, "-----END");
+      if (trailer != NULL) {
+        *trailer = '\0';
+      } else {
+        fprintf(stderr, "input has header but no trailer\n");
+        PORT_Free(filedata.data);
+        return SECFailure;
+      }
+    } else {
+      body = asc;
+    }
+
+    /* Convert to binary */
+    rv = ATOB_ConvertAsciiToItem(der, body);
+    if (rv) {
+      return SECFailure;
+    }
+
+    PORT_Free(filedata.data);
+  } else {
+    /* Read in binary der */
+    rv = SECU_FileToItem(der, inFile);
+    if (rv) {
+      return SECFailure;
+    }
+  }
+  return SECSuccess;
+}
+
+/* Modified from NSS source */
+SECStatus
+SECU_ReadDER(SECItem *der, std::string data)
+{
+  SECStatus rv;
+
+  /* First convert ascii to binary */
+  //SECItem filedata;
+  char *asc, *body;
+
+  /* Read in ascii data */
+  asc = (char *)data.data();
+  if (!asc) {
+    fprintf(stderr, "unable to read data from input file\n");
+    return SECFailure;
+  }
+
+  /* check for headers and trailers and remove them */
+  if ((body = strstr(asc, "-----BEGIN")) != NULL) {
+    char *trailer = NULL;
+    asc = body;
+    body = PORT_Strchr(body, '\n');
+    if (!body)
+      body = PORT_Strchr(asc, '\r'); /* maybe this is a MAC file */
+    if (body)
+      trailer = strstr(++body, "-----END");
+    if (trailer != NULL) {
+      *trailer = '\0';
+    } else {
+      fprintf(stderr, "input has header but no trailer\n");
+      return SECFailure;
+    }
+  } else {
+    body = asc;
+  }
+
+  /* Convert to binary */
+  rv = ATOB_ConvertAsciiToItem(der, body);
+  if (rv) {
+    return SECFailure;
+  }
 }
 
 std::string
-pubKeyHash(SECKEYPublicKey *key)
+pubKeyHash(SECKEYPublicKey* key)
 {
   auto derPubKey = to_unique(SECKEY_EncodeDERSubjectPublicKeyInfo(key));
   return hash(derPubKey->data, derPubKey->data + derPubKey->len);
 }
 
 std::string
-certPubKeyHash(CERTCertificate *cert)
+certPubKeyHash(CERTCertificate* cert)
 {
   auto pubKey = to_unique(CERT_ExtractPublicKey(cert));
   return pubKeyHash(pubKey.get());
@@ -199,9 +242,9 @@ certPubKeyHash(CERTCertificate *cert)
  * Peer
  */
 
-Peer::Peer(ConnectContext &ctx, std::string nickname,
-  c_unique_ptr<CERTCertificate> cert)
-  : _ctx(ctx), _nickname(std::move(nickname)), _cert(std::move(cert))
+Peer::Peer(ConnectContext& ctx, std::string nickname,
+  c_unique_ptr<SECKEYPublicKey> pubKey)
+  : _ctx(ctx), _nickname(std::move(nickname)), _pubKey(std::move(pubKey))
   {}
 
 void
@@ -273,10 +316,10 @@ Peer::nickname() const
   return _nickname;
 }
 
-const CERTCertificate *
-Peer::cert() const
+const SECKEYPublicKey*
+Peer::pubKey() const
 {
-  return _cert.get();
+  return _pubKey.get();
 }
 
 const Peer::address_list&
@@ -318,7 +361,7 @@ h2::ClientRequest& Peer::submit(std::string method,
 namespace
 {
 std::string
-nicknameFromFilename(const std::string &filename)
+nicknameFromFilename(const std::string& filename)
 {
   std::size_t pos = filename.find_last_of('.');
   if (pos == std::string::npos)
@@ -327,7 +370,13 @@ nicknameFromFilename(const std::string &filename)
 }
 } // namespace
 
-PeerDb::PeerDb(ConnectContext &ctx, const std::string &directory)
+PeerDb::PeerDb(ConnectContext& ctx)
+  : _ctx(ctx)
+{
+}
+
+PeerDb::PeerDb(ConnectContext& ctx, const std::string& directory)
+  : _ctx(ctx)
 {
   /* Open the peer directory */
   auto dir = to_unique(PR_OpenDir(directory.c_str()));
@@ -351,7 +400,7 @@ PeerDb::PeerDb(ConnectContext &ctx, const std::string &directory)
     if (SECU_ReadDERFromFile(&certDER, file.get(), PR_TRUE) != SECSuccess)
       BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
         "Unable to read peer file " + filename));
-
+    
     auto cert = to_unique(CERT_DecodeCertFromPackage(
                          reinterpret_cast<char *>(certDER.data), certDER.len));
     if (!cert)
@@ -366,11 +415,12 @@ PeerDb::PeerDb(ConnectContext &ctx, const std::string &directory)
     auto nickname = nicknameFromFilename(filename);
     auto keyHash = pubKeyHash(pubKey.get());
 
-    std::cerr << "Added peer " << nickname << " with key hash " << to_hex(keyHash) << std::endl;
+    std::cerr << "Added peer " << nickname << " with key hash "
+      << to_hex(keyHash) << std::endl;
 
     peers.insert(std::make_pair(keyHash,
                                 std::make_unique<Peer>(ctx, nickname,
-                                                       std::move(cert))));
+                                                       std::move(pubKey))));
   }
   if (PR_GetError() != PR_NO_MORE_FILES_ERROR) {
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
@@ -378,8 +428,26 @@ PeerDb::PeerDb(ConnectContext &ctx, const std::string &directory)
   }
 }
 
+Peer& PeerDb::addPeer(const std::string& derPublicKey,
+  const std::string & nickname)
+{
+  SECItem item;
+  auto binaryPublicKey = SECU_ReadDER(&item, derPublicKey);
+  //SECItem item{ siBuffer,
+  //  reinterpret_cast<unsigned char*>(const_cast<char*>(derPublicKey.data())),
+  //  derPublicKey.length() };
+
+  auto publicKeyInfo = to_unique(SECKEY_DecodeDERSubjectPublicKeyInfo(&item));
+  auto publicKey = to_unique(SECKEY_ExtractPublicKey(publicKeyInfo.get()));
+  auto keyHash = pubKeyHash(publicKey.get());
+
+  auto peerIt = peers.insert({ keyHash,
+    std::make_unique<Peer>(_ctx, nickname, std::move(publicKey)) });
+  return *(peerIt.first->second);
+}
+
 boost::optional<Peer&>
-PeerDb::findByKey(SECKEYPublicKey *key)
+PeerDb::findByKey(SECKEYPublicKey* key)
 {
   auto it = peers.find(pubKeyHash(key));
   if (it != peers.end()) {
@@ -404,7 +472,11 @@ PeerDb::findByNickname(std::string nickname)
  * ConnectContext
  */
 
-ConnectContext::ConnectContext(io::SSLContext &sslCtx,
+ConnectContext::ConnectContext(io::SSLContext& sslCtx)
+  : _sslCtx(sslCtx), _peerDb(*this)
+{}
+
+ConnectContext::ConnectContext(io::SSLContext& sslCtx,
                                std::string peerdir)
   : _sslCtx(sslCtx), _peerDb(*this, std::move(peerdir))
   {}
@@ -427,21 +499,27 @@ ConnectContext::addDirectory(std::string directory)
   _directories.push_back(directory);
 }
 
+Peer& ConnectContext::addPeer(const std::string & derPublicKey,
+  const std::string & nickname)
+{
+  return _peerDb.addPeer(derPublicKey, nickname);
+}
+
 boost::optional<Peer&> 
-ConnectContext::findPeerByName(const std::string &nickname)
+ConnectContext::findPeerByName(const std::string& nickname)
 {
   return _peerDb.findByNickname(nickname);
 }
 
-boost::optional<Peer&> 
-ConnectContext::findPeerByCert(CERTCertificate *cert)
+boost::optional<Peer&>
+ConnectContext::findPeerByCert(CERTCertificate* cert)
 {
   auto pubKey = to_unique(CERT_ExtractPublicKey(cert));
   return _peerDb.findByKey(pubKey.get());
 }
 
-void 
-ConnectContext::handshakePeer(io::SSLSocket &socket,
+void
+ConnectContext::handshakePeer(io::SSLSocket& socket,
                               boost::optional<Peer&> knownPeer,
                               handshake_peer_callback cb)
 {
@@ -473,7 +551,7 @@ ConnectContext::handshakePeer(io::SSLSocket &socket,
 }
 
 void
-ConnectContext::connectPeerDirect(Peer &peer, PRNetAddr *addr)
+ConnectContext::connectPeerDirect(Peer& peer, PRNetAddr *addr)
 {
   std::shared_ptr<io::SSLSocket> socket = _sslCtx.openSocket();
   socket->connect(addr,
@@ -501,7 +579,7 @@ ConnectContext::connectPeerDirect(Peer &peer, PRNetAddr *addr)
 }
 
 void
-ConnectContext::tryConnectPeerTor(Peer &peer,
+ConnectContext::tryConnectPeerTor(Peer& peer,
                                   Peer::address_list::const_iterator it)
 {
   if (it != peer.addresses().end()) {
@@ -538,7 +616,7 @@ ConnectContext::tryConnectPeerTor(Peer &peer,
 }
 
 void
-ConnectContext::connectPeerTor(Peer &peer)
+ConnectContext::connectPeerTor(Peer& peer)
 {
   tryConnectPeerTor(peer, peer.addresses().begin());
 }
@@ -627,7 +705,8 @@ ConnectContext::exec()
   ioCtx().exec();
 }
 
-std::shared_ptr<Service> ConnectContext::newService(std::string name)
+std::shared_ptr<Service>
+ConnectContext::newService(std::string name)
 {
   auto service = std::make_shared<Service>(*this, name);
   auto it = _services.emplace(std::make_pair(name, service));
@@ -635,8 +714,8 @@ std::shared_ptr<Service> ConnectContext::newService(std::string name)
   return service;
 }
 
-void ConnectContext::onPeerRequest(Peer & peer,
-                                   h2::ServerRequest & request)
+void
+ConnectContext::onPeerRequest(Peer& peer, h2::ServerRequest& request)
 {
   if (!request.path() || !request.scheme()) {
     request.stream().close(boost::system::error_code());
@@ -657,7 +736,7 @@ void ConnectContext::onPeerRequest(Peer & peer,
       peer.reverseConnection(websocket,
         mist::Peer::ConnectionDirection::Client);
     } else {
-      std::cerr << "Unrecognized reciprocal scheme " << scheme << std::endl;
+      std::cerr << "Unrecognized reverse scheme " << scheme << std::endl;
       request.stream().close(boost::system::error_code());
     }
   } else {
@@ -691,16 +770,15 @@ void ConnectContext::onPeerRequest(Peer & peer,
   }
 }
 
-void ConnectContext::initializeReverseConnection(Peer & peer)
+void ConnectContext::initializeReverseConnection(Peer& peer)
 {
   assert(peer._clientSession);
   auto websocket = std::make_shared<h2::ClientWebSocket>();
-  websocket->start(*peer._clientSession, "mist", "https://mist",
-    "/mist/reverse");
+  websocket->start(*peer._clientSession, "mist", "/mist/reverse");
   peer.reverseConnection(websocket, mist::Peer::ConnectionDirection::Server);
 }
 
-void ConnectContext::onPeerConnectionStatus(Peer & peer,
+void ConnectContext::onPeerConnectionStatus(Peer& peer,
   Peer::ConnectionStatus status)
 {
   for (auto& service : _services) {
@@ -709,10 +787,10 @@ void ConnectContext::onPeerConnectionStatus(Peer & peer,
 }
 
 void
-ConnectContext::serviceSubmit(Service &service, Peer &peer,
+ConnectContext::serviceSubmit(Service& service, Peer& peer,
   std::string method, std::string path, Service::peer_submit_callback cb)
 {
-  mist::h2::ClientSession &session = peer.clientSession();
+  mist::h2::ClientSession& session = peer.clientSession();
 
   auto& request = session.submit(std::move(method),
     "/" + service._name + "/" + path, "https", "mist", mist::h2::header_map());
@@ -720,21 +798,20 @@ ConnectContext::serviceSubmit(Service &service, Peer &peer,
 }
 
 void
-ConnectContext::serviceOpenWebSocket(Service &service, Peer &peer,
+ConnectContext::serviceOpenWebSocket(Service& service, Peer& peer,
   std::string path, Service::peer_websocket_callback cb)
 {
-  mist::h2::ClientSession &session = peer.clientSession();
+  mist::h2::ClientSession& session = peer.clientSession();
 
   auto websocket = std::make_shared<h2::ClientWebSocket>();
-  websocket->start(session, "mist", "https://mist",
-    "/" + service._name + "/" + path);
+  websocket->start(session, "mist", "/" + service._name + "/" + path);
   cb(peer, path, websocket);
 }
 
 /*
  * Service
  */
-Service::Service(ConnectContext &ctx, std::string name)
+Service::Service(ConnectContext& ctx, std::string name)
   : _ctx(ctx), _name(name)
 {
 }
@@ -746,7 +823,7 @@ Service::setOnPeerConnectionStatus(peer_connection_status_callback cb)
 }
 
 void
-Service::onStatus(Peer &peer, Peer::ConnectionStatus status)
+Service::onStatus(Peer& peer, Peer::ConnectionStatus status)
 {
   if (_onStatus)
     _onStatus(peer, status);
@@ -759,7 +836,7 @@ Service::setOnPeerRequest(peer_request_callback cb)
 }
 
 void
-Service::onRequest(Peer &peer, h2::ServerRequest &request,
+Service::onRequest(Peer& peer, h2::ServerRequest& request,
   std::string subPath)
 {
   if (_onRequest)
@@ -767,7 +844,7 @@ Service::onRequest(Peer &peer, h2::ServerRequest &request,
 }
 
 void
-Service::submit(Peer &peer, std::string method, std::string path,
+Service::submit(Peer& peer, std::string method, std::string path,
   peer_submit_callback cb)
 {
   _ctx.serviceSubmit(*this, peer, std::move(method), std::move(path),
@@ -775,7 +852,7 @@ Service::submit(Peer &peer, std::string method, std::string path,
 }
 
 void
-Service::openWebSocket(Peer &peer, std::string path,
+Service::openWebSocket(Peer& peer, std::string path,
   peer_websocket_callback cb)
 {
   _ctx.serviceOpenWebSocket(*this, peer, std::move(path), std::move(cb));
@@ -788,7 +865,7 @@ Service::setOnWebSocket(peer_websocket_callback cb)
 }
 
 void
-Service::onWebSocket(Peer &peer, std::string path,
+Service::onWebSocket(Peer& peer, std::string path,
   std::shared_ptr<io::Socket> socket)
 {
   if (_onWebSocket)

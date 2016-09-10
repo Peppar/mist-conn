@@ -50,7 +50,7 @@ public:
   enum class ConnectionStatus { Disconnected, Connected };
 
   Peer(ConnectContext &ctx, std::string nickname,
-    c_unique_ptr<CERTCertificate> cert);
+    c_unique_ptr<SECKEYPublicKey> pubKey);
 
   void connection(std::shared_ptr<io::Socket> socket,
     ConnectionType connType, ConnectionDirection connDirection);
@@ -60,7 +60,7 @@ public:
 
   const std::string nickname() const;
 
-  const CERTCertificate *cert() const;
+  const SECKEYPublicKey *pubKey() const;
 
   const address_list &addresses() const;
 
@@ -87,7 +87,7 @@ private:
 
   ConnectContext &_ctx;
   std::string _nickname;
-  c_unique_ptr<CERTCertificate> _cert;
+  c_unique_ptr<SECKEYPublicKey> _pubKey;
   address_list _addresses;
 
 };
@@ -97,6 +97,7 @@ class PeerDb
 private:
 
   std::map<std::string, std::unique_ptr<Peer>> peers;
+  ConnectContext& _ctx;
 
 public:
 
@@ -104,6 +105,9 @@ public:
   boost::optional<Peer&> findByNickname(std::string nickname);
 
   PeerDb(ConnectContext &ctx, const std::string &directory);
+  PeerDb(ConnectContext &ctx);
+
+  Peer& addPeer(const std::string &derPublicKey, const std::string &nickname);
 
 };
 
@@ -185,6 +189,7 @@ public:
 
   void connectPeerTor(Peer &peer);
 
+  ConnectContext(io::SSLContext &sslCtx);
   ConnectContext(io::SSLContext &sslCtx, std::string peerdir);
 
   io::IOContext &ioCtx();
@@ -192,6 +197,8 @@ public:
   io::SSLContext &sslCtx();
 
   void addDirectory(std::string directory);
+
+  Peer& addPeer(const std::string& derPublicKey, const std::string& nickname);
 
   boost::optional<Peer&> findPeerByName(const std::string &nickname);
 

@@ -20,6 +20,21 @@
 
 #include <sechash.h>
 
+struct SEC_PKCS12DecoderContextStr;
+typedef struct SEC_PKCS12DecoderContextStr SEC_PKCS12DecoderContext;
+extern "C" void SEC_PKCS12DecoderFinish(SEC_PKCS12DecoderContext*);
+
+
+template<>
+struct c_deleter<SEC_PKCS12DecoderContext>
+{
+  using type = void(*)(SEC_PKCS12DecoderContext*);
+  static void del(SEC_PKCS12DecoderContext *ptr)
+  {
+    SEC_PKCS12DecoderFinish(ptr);
+  }
+};
+
 template<>
 struct c_deleter<CERTCertificate>
 {
@@ -47,6 +62,16 @@ struct c_deleter<CERTCertNicknames>
   static void del(CERTCertNicknames *ptr)
   {
     CERT_FreeNicknames(ptr);
+  }
+};
+
+template<>
+struct c_deleter<CERTSubjectPublicKeyInfo>
+{
+  using type = void(*)(CERTSubjectPublicKeyInfo*);
+  static void del(CERTSubjectPublicKeyInfo *ptr)
+  {
+    SECKEY_DestroySubjectPublicKeyInfo(ptr);
   }
 };
 

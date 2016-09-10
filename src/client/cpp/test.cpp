@@ -79,8 +79,15 @@ main(int argc, char **argv)
   boost::filesystem::path torPath(argv[4]);
 
   mist::io::IOContext ioCtx;
-  mist::io::SSLContext sslCtx(ioCtx, (rootDir / "key_db").string(), nickname);
-  mist::ConnectContext ctx(sslCtx, (rootDir / "peers").string());
+  mist::io::SSLContext sslCtx(ioCtx, (rootDir / "key_db").string(),
+    "myPassword", "mist_root");
+  mist::ConnectContext ctx(sslCtx); //, (rootDir / "peers").string());
+  ctx.addPeer("-----BEGIN PUBLIC KEY-----\n"
+    "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIdvWMNwaGjq+KanJxZm4QRzNA\n"
+    "VXDMIGb1jz9zAALG39S9kU/dTlpXHgN5clTr2x3qhOVqmFbEMy1yQYMbm66X/Jfk\n"
+    "4DAyju+oJVMIDZbCE/W4qqY6KyMIOLV+AQqvy0FQFQTtAjFph7LEQtMmYkswa7+g\n"
+    "cFyZ7i5fXR4JmX7enwIDAQAB\n"
+    "-----END PUBLIC KEY-----\n", "myself");
 
   /*ioCtx.queueJob([]() {
   while (1) {

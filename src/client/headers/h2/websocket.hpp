@@ -72,7 +72,7 @@ private:
       Continuous,
     } state;
 
-    std::vector<uint8_t> buffer;
+    std::vector<std::uint8_t> buffer;
     std::size_t length;
 
     read_callback cb;
@@ -88,8 +88,7 @@ public:
 
   ClientWebSocket();
 
-  void start(ClientSession &session, std::string authority, std::string origin,
-    std::string path);
+  void start(ClientSession &session, std::string authority, std::string path);
 
 private:
 

@@ -122,7 +122,7 @@ ClientWebSocket::ClientWebSocket()
 
 void
 ClientWebSocket::start(ClientSession &session, std::string authority,
-  std::string origin, std::string path)
+  std::string path)
 {
   boost::optional<ClientStream&> stream;
 

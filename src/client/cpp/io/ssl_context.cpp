@@ -7,6 +7,8 @@
 #include <vector>
 #include <list>
 
+#include <base64.h>
+
 #include <prtypes.h>
 #include <prio.h>
 #include <pk11priv.h>
@@ -22,8 +24,12 @@
 #include <boost/system/system_error.hpp>
 #include <boost/throw_exception.hpp>
 
+#include "crypto/hash.hpp"
+#include "crypto/pkcs12.hpp"
+
 #include "error/mist.hpp"
 #include "error/nss.hpp"
+
 #include "memory/nss.hpp"
 
 #include "io/io_context.hpp"
@@ -70,30 +76,61 @@ to_hex(std::string str)
 }
 
 std::string
-hash(const std::uint8_t *begin, const std::uint8_t *end,
-     SECOidTag hashOIDTag = SEC_OID_SHA256)
+pubKeyHash(SECKEYPublicKey *pubKey)
 {
-  std::array<std::uint8_t, 64> digest;
-  unsigned int len;
-  
-  HASH_HashType hashType = HASH_GetHashTypeByOidTag(hashOIDTag);
-  
-  auto ctx = to_unique(HASH_Create(hashType));
-  HASH_Begin(ctx.get());
-  HASH_Update(ctx.get(),
-    reinterpret_cast<const unsigned char *>(begin), end - begin);
-  HASH_End(ctx.get(),
-    reinterpret_cast<unsigned char *>(digest.data()), &len, digest.size());
-  
-  return std::string(reinterpret_cast<const char *>(digest.data()), len);
+  auto derPubKey = to_unique(SECKEY_EncodeDERSubjectPublicKeyInfo(pubKey));
+  return crypto::hash_sha3_256(derPubKey->data,
+    derPubKey->data + derPubKey->len);
 }
 
 std::string
 certPubKeyHash(CERTCertificate *cert)
 {
   auto pubKey = to_unique(CERT_ExtractPublicKey(cert));
-  auto derPubKey = to_unique(SECKEY_EncodeDERSubjectPublicKeyInfo(pubKey.get()));
-  return hash(derPubKey->data, derPubKey->data + derPubKey->len);
+  return pubKeyHash(pubKey.get());
+}
+
+/* Modified from NSS source */
+SECStatus
+SECU_ReadDER(SECItem *der, std::string data)
+{
+  SECStatus rv;
+
+  /* First convert ascii to binary */
+  //SECItem filedata;
+  char *asc, *body;
+
+  /* Read in ascii data */
+  asc = (char *)data.data();
+  if (!asc) {
+    fprintf(stderr, "unable to read data from input file\n");
+    return SECFailure;
+  }
+
+  /* check for headers and trailers and remove them */
+  if ((body = strstr(asc, "-----BEGIN")) != NULL) {
+    char *trailer = NULL;
+    asc = body;
+    body = PORT_Strchr(body, '\n');
+    if (!body)
+      body = PORT_Strchr(asc, '\r'); /* maybe this is a MAC file */
+    if (body)
+      trailer = strstr(++body, "-----END");
+    if (trailer != NULL) {
+      *trailer = '\0';
+    } else {
+      fprintf(stderr, "input has header but no trailer\n");
+      return SECFailure;
+    }
+  } else {
+    body = asc;
+  }
+
+  /* Convert to binary */
+  rv = ATOB_ConvertAsciiToItem(der, body);
+  if (rv) {
+    return SECFailure;
+  }
 }
 
 } // namespace
@@ -101,12 +138,31 @@ certPubKeyHash(CERTCertificate *cert)
 /*
  * SSLContext
  */
-SSLContext::SSLContext(IOContext &ioCtx,
-                       const std::string &dbdir,
-                       const std::string &nickname)
-  : _ioCtx(ioCtx), _nickname(nickname)
+SSLContext::SSLContext(IOContext& ioCtx, const std::string& dbdir,
+  const std::string& slotPassword, const std::string& nickname)
+  : _ioCtx(ioCtx), _slotPassword(slotPassword), _nickname(nickname)
 {
   initializeNSS(dbdir);
+}
+
+void SSLContext::installPrivateKey(const std::string& privateKey,
+  const std::string &privateKeyPassword)
+{
+  //SECItem item;
+  //auto binaryCertificate = SECU_ReadDER(&item, certificate);
+  auto slot = to_unique(PK11_GetInternalSlot());
+  crypto::importPKCS12(slot.get(), _slotPassword, privateKey,
+    privateKeyPassword, _nickname);
+
+  /*
+
+  auto publicKeyInfo = to_unique(SECKEY_DecodeDERSubjectPublicKeyInfo(&item));
+  auto publicKey = to_unique(SECKEY_ExtractPublicKey(publicKeyInfo.get()));
+  auto keyHash = pubKeyHash(publicKey.get());
+
+  auto peerIt = _peers.insert({ keyHash,
+    std::make_unique<Peer>(_ctx, nickname, std::move(publicKey)) });
+  return *(peerIt.first->second);*/
 }
 
 IOContext &
@@ -238,7 +294,7 @@ SSLContext::initializeNSS(const std::string &dbdir)
   if (NSS_InitReadWrite(dbdir.c_str()) != SECSuccess)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to initialize NSS"));
-  
+
   /* Set the password function to delegate to SSLContext */
   PK11_SetPasswordFunc(
     [](PK11SlotInfo *info, PRBool retry, void *arg)

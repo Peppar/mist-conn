@@ -163,6 +163,9 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\client\cpp\conn.cpp" />
+    <ClCompile Include="src\client\cpp\crypto\hash.cpp" />
+    <ClCompile Include="src\client\cpp\crypto\pkcs12.cpp" />
+    <ClCompile Include="src\client\cpp\crypto\sha3.c" />
     <ClCompile Include="src\client\cpp\error\mist.cpp" />
     <ClCompile Include="src\client\cpp\error\nghttp2.cpp" />
     <ClCompile Include="src\client\cpp\error\nss.cpp" />
@@ -185,6 +188,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\client\headers\conn.hpp" />
+    <ClInclude Include="src\client\headers\crypto\hash.hpp" />
+    <ClInclude Include="src\client\headers\crypto\pkcs12.hpp" />
+    <ClInclude Include="src\client\headers\crypto\sha3.h" />
     <ClInclude Include="src\client\headers\error\mist.hpp" />
     <ClInclude Include="src\client\headers\error\nghttp2.hpp" />
     <ClInclude Include="src\client\headers\error\nss.hpp" />

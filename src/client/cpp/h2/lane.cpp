@@ -138,5 +138,5 @@ ResponseLane::contentLength() const
   return _contentLength;
 }
 
-}
-}
+} // namespace h2
+} // namespace mist

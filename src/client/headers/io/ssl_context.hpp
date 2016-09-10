@@ -39,37 +39,48 @@ private:
 
   friend class SSLSocket;
 
-  IOContext &_ioCtx;
+  IOContext& _ioCtx;
+
+  std::string _slotPassword;
 
   std::string _nickname;
 
+  c_unique_ptr<CERTCertificate> _certificate;
+
+  c_unique_ptr<SECKEYPrivateKey> _privateKey;
+
   /* Initialize NSS with the given database directory */
-  void initializeNSS(const std::string &dbdir);
+  void initializeNSS(const std::string& dbdir);
 
   /* Upgrades the NSPR socket file descriptor to TLS */
-  void initializeSecurity(c_unique_ptr<PRFileDesc> &fd);
+  void initializeSecurity(c_unique_ptr<PRFileDesc>& fd);
   
   /* Initialize the socket with mist TLS settings */
-  void initializeTLS(SSLSocket &sock);
+  void initializeTLS(SSLSocket& sock);
 
   /* Called when NSS wants to get the client certificate */
-  SECStatus getClientCert(SSLSocket &socket, CERTDistNames *caNames,
-                          CERTCertificate **pRetCert,
-                          SECKEYPrivateKey **pRetKy);
+  SECStatus getClientCert(SSLSocket& socket, CERTDistNames* caNames,
+                          CERTCertificate** pRetCert,
+                          SECKEYPrivateKey** pRetKy);
 
   /* Called when NSS wants to authenticate the peer certificate */
-  SECStatus authCertificate(SSLSocket &socket, PRBool checkSig,
+  SECStatus authCertificate(SSLSocket& socket, PRBool checkSig,
                             PRBool isServer);
 
   /* Called when NSS wants us to supply a password */
-  boost::optional<std::string> getPassword(PK11SlotInfo *info, PRBool retry);
+  boost::optional<std::string> getPassword(PK11SlotInfo* info, PRBool retry);
 
 public:
 
-  SSLContext(IOContext &ioCtx, const std::string &dbdir,
-             const std::string &nickname);
+  SSLContext(IOContext& ioCtx, const std::string& dbdir,
+    const std::string& slotPassword, const std::string& nickname);
 
-  IOContext &ioCtx();
+  void installPrivateKey(const std::string& privateKey,
+    const std::string &privateKeyPassword);
+  //void setCertificateAndPrivateKey(const std::string& cert,
+  //  const std::string& privateKey);
+
+  IOContext& ioCtx();
 
   void serve(std::uint16_t servPort, connection_callback cb);
 
