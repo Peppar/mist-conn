@@ -22,7 +22,7 @@
 #include "memory/nss.hpp"
 
 #include "io/io_context.hpp"
-#include "io/socket.hpp"
+#include "io/tcp_socket.hpp"
 
 namespace mist
 {
@@ -84,10 +84,10 @@ IOContext::signal()
       "Unable to signal write"));
 }
 
-std::shared_ptr<Socket>
+std::shared_ptr<TCPSocket>
 IOContext::openSocket()
 {
-  auto socket = std::make_shared<Socket>(*this, openTCPSocket(), false);
+  auto socket = std::make_shared<TCPSocket>(*this, openTCPSocket(), false);
   addDescriptor(socket);
   return std::move(socket);
 }

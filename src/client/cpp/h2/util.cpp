@@ -27,7 +27,7 @@ nghttp2_nv make_nghttp2_nv(const char *name, const char *value,
   };
 }
 
-nghttp2_nv make_nghttp2_nv(std::string name, const std::string &value,
+nghttp2_nv make_nghttp2_nv(const std::string &name, const std::string &value,
                            bool noIndex)
 {
   return make_nghttp2_nv(name.data(), value.data(), name.length(), value.length(),
@@ -53,7 +53,7 @@ nghttp2_nv make_nghttp2_nv(const char(&name)[N], const char(&value)[M],
 }
 
 template <std::size_t N>
-nghttp2_nv make_nghttp2_nv(std::string name, const char(&value)[N],
+nghttp2_nv make_nghttp2_nv(const std::string &name, const char(&value)[N],
                            bool noIndex)
 {
   return make_nghttp2_nv(name.data(), value, name.length(), N - 1,

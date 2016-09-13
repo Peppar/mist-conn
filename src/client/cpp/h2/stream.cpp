@@ -143,8 +143,8 @@ ClientStream::response()
 
 int
 ClientStream::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
-                       std::size_t namelen, const std::uint8_t *value,
-                       std::size_t valuelen, std::uint8_t flags)
+  std::size_t namelen, const std::uint8_t *value, std::size_t valuelen,
+  std::uint8_t flags)
 {
   switch (frame->hd.type) {
   case NGHTTP2_HEADERS:
@@ -206,7 +206,8 @@ ClientStream::onFrameNotSend(const nghttp2_frame *frame, int errorCode)
 }
 
 int
-ClientStream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data, std::size_t length)
+ClientStream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data,
+  std::size_t length)
 {
   response().onData(data, length);
 
@@ -222,12 +223,8 @@ ClientStream::onStreamClose(std::uint32_t errorCode)
 }
 
 void
-ClientStream::submit(std::string method,
-                     std::string path,
-                     std::string scheme,
-                     std::string authority,
-                     header_map headers,
-                     generator_callback cb)
+ClientStream::submit(std::string method, std::string path, std::string scheme,
+  std::string authority, header_map headers, generator_callback cb)
 {
   std::vector<nghttp2_nv> nvs;
   
@@ -239,7 +236,7 @@ ClientStream::submit(std::string method,
     headers.insert({":scheme", {std::move(scheme), false}});
     headers.insert({":authority", {std::move(authority), false}});
     nvs = makeHeaderNv(headers);
-    request().setHeaders(std::move(headers));
+    request().setHeaders(headers);
   }
 
   /* Set the data provider, if applicable */
@@ -262,9 +259,7 @@ ClientStream::submit(std::string method,
   /* Submit */
   {
     std::int32_t streamId = nghttp2_submit_request(nghttp2Session(),
-                                                   nullptr,
-                                                   nvs.data(), nvs.size(),
-                                                   prdptr, this);
+      nullptr, nvs.data(), nvs.size(), prdptr, this);
     if (streamId < 0)
       BOOST_THROW_EXCEPTION(boost::system::system_error(
         make_nghttp2_error(streamId), "Unable to submit request"));
@@ -306,9 +301,8 @@ ServerStream::response()
 }
 
 void
-ServerStream::submit(std::uint16_t statusCode,
-                     header_map headers,
-                     generator_callback cb)
+ServerStream::submit(std::uint16_t statusCode, header_map headers,
+  generator_callback cb)
 {
   std::vector<nghttp2_nv> nvs;
   
@@ -317,7 +311,7 @@ ServerStream::submit(std::uint16_t statusCode,
     /* Special and mandatory headers */
     headers.insert({":status", {std::to_string(statusCode), false}});
     nvs = makeHeaderNv(headers);
-    response().setHeaders(std::move(headers));
+    response().setHeaders(headers);
   }
 
   /* Set the data provider, if applicable */
@@ -340,7 +334,7 @@ ServerStream::submit(std::uint16_t statusCode,
   /* Submit */
   {
     auto rv = nghttp2_submit_response(nghttp2Session(), streamId(),
-                                      nvs.data(), nvs.size(), prdptr);
+      nvs.data(), nvs.size(), prdptr);
     if (rv)
       BOOST_THROW_EXCEPTION(boost::system::system_error(
         make_nghttp2_error(rv), "Unable to submit response"));
@@ -353,8 +347,8 @@ ServerStream::submit(std::uint16_t statusCode,
 
 int
 ServerStream::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
-                       std::size_t namelen, const std::uint8_t *value,
-                       std::size_t valuelen, std::uint8_t flags)
+  std::size_t namelen, const std::uint8_t *value, std::size_t valuelen,
+  std::uint8_t flags)
 {
   switch (frame->hd.type) {
   case NGHTTP2_HEADERS:
@@ -392,6 +386,9 @@ ServerStream::onFrameRecv(const nghttp2_frame *frame)
 int
 ServerStream::onFrameSend(const nghttp2_frame *frame)
 {
+  if (frame->hd.type == NGHTTP2_RST_STREAM) {
+    std::cerr << "Server reset stream" << std::endl;
+  }
   return 0;
 }
 
@@ -403,7 +400,7 @@ ServerStream::onFrameNotSend(const nghttp2_frame *frame, int errorCode)
 
 int
 ServerStream::onDataChunkRecv(std::uint8_t flags, const std::uint8_t *data,
-                              std::size_t length)
+  std::size_t length)
 {
   request().onData(data, length);
 

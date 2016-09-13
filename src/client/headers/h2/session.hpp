@@ -27,14 +27,6 @@ namespace h2
 
 class Stream;
 
-class WebSocket
-{
-public:
-
-  void setDataProvider();
-
-};
-
 class Session
 {
 private:
@@ -48,8 +40,8 @@ private:
   /* nghttp2 session struct */
   c_unique_ptr<nghttp2_session> _h2session;
   
-  /* Underlying TLS socket */
-  std::shared_ptr<io::SSLSocket> _socket;
+  /* Underlying socket */
+  std::shared_ptr<io::Socket> _socket;
   
   /* Map of all streams in the session */
   using stream_map = std::map<std::int32_t, std::unique_ptr<Stream>>;
@@ -73,7 +65,7 @@ private:
 
 protected:
 
-  Session(std::shared_ptr<io::SSLSocket> socket, bool isServer);
+  Session(std::shared_ptr<io::Socket> socket, bool isServer);
   
   virtual ~Session();
 
@@ -115,7 +107,8 @@ protected:
 
   /* Lookup a stream from its stream id */
   template<typename StreamT>
-  boost::optional<StreamT&> findStream(std::int32_t streamId)
+  boost::optional<StreamT&>
+  findStream(std::int32_t streamId)
   {
     auto it = _streams.find(streamId);
     if (it == _streams.end())
@@ -126,7 +119,8 @@ protected:
   
   /* Insert a new stream. The stream must have a stream id assigned. */
   template<typename StreamT>
-  StreamT &insertStream(std::unique_ptr<StreamT> strm)
+  StreamT &
+  insertStream(std::unique_ptr<StreamT> strm)
   {
     assert (strm->hasValidStreamId());
     auto it = _streams.insert(std::make_pair(strm->streamId(),
@@ -178,7 +172,7 @@ protected:
 
 public:
 
-  ClientSession(std::shared_ptr<io::SSLSocket> socket);
+  ClientSession(std::shared_ptr<io::Socket> socket);
 
   ClientRequest&
   submit(std::string method, std::string path, std::string scheme,
@@ -221,7 +215,7 @@ protected:
 
 public:
 
-  ServerSession(std::shared_ptr<io::SSLSocket> socket);
+  ServerSession(std::shared_ptr<io::Socket> socket);
 
   void setOnRequest(server_request_callback cb);
 

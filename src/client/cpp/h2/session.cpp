@@ -5,7 +5,7 @@
 #include <boost/system/system_error.hpp>
 #include <boost/throw_exception.hpp>
 
-#include "io/ssl_socket.hpp"
+#include "io/socket.hpp"
 
 #include "error/nghttp2.hpp"
 #include "error/mist.hpp"
@@ -44,16 +44,25 @@ std::string frameName(std::uint8_t type)
 /*
  * Session
  */
-Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
+Session::Session(std::shared_ptr<io::Socket> socket, bool isServer)
   : _socket(std::move(socket)),
     _h2session(to_unique<nghttp2_session>()),
     _sending(false),
     _stopped(false),
     _insideCallback(false)
 {
+  /* nghttp2 session options */
+  c_unique_ptr<nghttp2_option> opts;
+  {
+    nghttp2_option *optsPtr = nullptr;
+    nghttp2_option_new(&optsPtr);
+    opts = to_unique(optsPtr);
+
+    nghttp2_option_set_no_http_messaging(opts.get(), 1);
+  }
+
   /* Create the nghttp2_session_callbacks object */
-  c_unique_ptr<nghttp2_session_callbacks> cbs
-    = to_unique<nghttp2_session_callbacks>();
+  c_unique_ptr<nghttp2_session_callbacks> cbs;
   {
     nghttp2_session_callbacks *cbsPtr = nullptr;
     nghttp2_session_callbacks_new(&cbsPtr);
@@ -137,9 +146,9 @@ Session::Session(std::shared_ptr<io::SSLSocket> socket, bool isServer)
     nghttp2_session *sessPtr = nullptr;
     int rv;
     if (isServer) {
-      rv = nghttp2_session_server_new(&sessPtr, cbs.get(), this);
+      rv = nghttp2_session_server_new2(&sessPtr, cbs.get(), this, opts.get());
     } else {
-      rv = nghttp2_session_client_new(&sessPtr, cbs.get(), this);
+      rv = nghttp2_session_client_new2(&sessPtr, cbs.get(), this, opts.get());
     }
     if (rv) {
       BOOST_THROW_EXCEPTION(boost::system::system_error(
@@ -326,7 +335,7 @@ Session::write()
  * ClientSession
  */
 
-ClientSession::ClientSession(std::shared_ptr<io::SSLSocket> socket)
+ClientSession::ClientSession(std::shared_ptr<io::Socket> socket)
   : Session(std::move(socket), false)
 {
   start();
@@ -338,7 +347,7 @@ ClientSession::submit(std::string method, std::string path, std::string scheme,
 {
   auto strm = std::make_unique<ClientStream>(*this);
   strm->submit(method, path, scheme, authority, std::move(headers),
-                    std::move(cb));
+    std::move(cb));
   ClientRequest &request = insertStream(std::move(strm)).request();
   write();
   return request;
@@ -358,8 +367,8 @@ ClientSession::onBeginHeaders(const nghttp2_frame *frame)
 
 int
 ClientSession::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
-                       std::size_t namelen, const std::uint8_t *value,
-                       std::size_t valuelen, std::uint8_t flags)
+  std::size_t namelen, const std::uint8_t *value, std::size_t valuelen,
+  std::uint8_t flags)
 {
   auto stream = findStream<ClientStream>(frame->hd.stream_id);
   if (!stream)
@@ -405,7 +414,7 @@ ClientSession::onFrameRecv(const nghttp2_frame *frame)
 
 int
 ClientSession::onDataChunkRecv(std::uint8_t flags, std::int32_t stream_id,
-                               const std::uint8_t *data, std::size_t length)
+  const std::uint8_t *data, std::size_t length)
 {
   auto stream = findStream<ClientStream>(stream_id);
   if (!stream)
@@ -425,7 +434,7 @@ ClientSession::onStreamClose(std::int32_t stream_id, std::uint32_t error_code)
 /*
  * ServerSession
  */
-ServerSession::ServerSession(std::shared_ptr<io::SSLSocket> socket)
+ServerSession::ServerSession(std::shared_ptr<io::Socket> socket)
   : Session(std::move(socket), true)
 {
   start();
@@ -452,8 +461,8 @@ ServerSession::onBeginHeaders(const nghttp2_frame *frame)
 
 int
 ServerSession::onHeader(const nghttp2_frame *frame, const std::uint8_t *name,
-                       std::size_t namelen, const std::uint8_t *value,
-                       std::size_t valuelen, std::uint8_t flags)
+  std::size_t namelen, const std::uint8_t *value, std::size_t valuelen,
+  std::uint8_t flags)
 {
   auto stream = findStream<ServerStream>(frame->hd.stream_id);
   if (!stream)
@@ -498,7 +507,7 @@ ServerSession::onFrameRecv(const nghttp2_frame *frame)
 
 int
 ServerSession::onDataChunkRecv(std::uint8_t flags, std::int32_t stream_id,
-                               const std::uint8_t *data, std::size_t length)
+  const std::uint8_t *data, std::size_t length)
 {
   auto stream = findStream<ServerStream>(stream_id);
   if (!stream)

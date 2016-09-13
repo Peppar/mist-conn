@@ -74,7 +74,7 @@ is_negotiated_protocol_http2(PRFileDesc *fd)
  */
 SSLSocket::SSLSocket(SSLContext &sslCtx, c_unique_ptr<PRFileDesc> fd,
                      bool server)
-  : Socket(sslCtx.ioCtx(), std::move(fd), server),
+  : TCPSocket(sslCtx.ioCtx(), std::move(fd), server),
     _sslCtx(sslCtx),
     _server(server)
   {}
@@ -86,7 +86,7 @@ SSLSocket::inFlags() const
     std::cerr << "Socket handshaking poll" << std::endl;
     return PR_POLL_READ;
   } else {
-    return Socket::inFlags();
+    return TCPSocket::inFlags();
   }
 }
 
@@ -95,7 +95,7 @@ SSLSocket::process(PRInt16 inFlags, PRInt16 outFlags)
 {
   if (outFlags & (PR_POLL_ERR|PR_POLL_NVAL)) {
     
-    Socket::process(inFlags, outFlags);    
+    TCPSocket::process(inFlags, outFlags);    
 
   } else if (outFlags) {
     
@@ -107,7 +107,7 @@ SSLSocket::process(PRInt16 inFlags, PRInt16 outFlags)
       
     } else {
       
-      Socket::process(inFlags, outFlags);
+      TCPSocket::process(inFlags, outFlags);
       
     }
   }
@@ -197,7 +197,7 @@ SSLSocket::close(boost::system::error_code ec)
     _h.cb(ec);
     _h.cb = nullptr;
   }
-  Socket::close(ec);
+  TCPSocket::close(ec);
 }
 
 } // namespace io

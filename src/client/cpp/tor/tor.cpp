@@ -469,7 +469,7 @@ using socks_callback
 /* Try to perform a SOCKS5 handshake to connect to the given
 domain name and port. */
 void
-handshakeSOCKS5(mist::io::Socket &sock,
+handshakeSOCKS5(mist::io::TCPSocket &sock,
   std::string hostname, std::uint16_t port,
   socks_callback cb)
 {
@@ -597,7 +597,7 @@ handshakeSOCKS5(mist::io::Socket &sock,
 } // namespace
 
 void
-TorController::connect(io::Socket & socket, std::string hostname,
+TorController::connect(io::TCPSocket & socket, std::string hostname,
   std::uint16_t port, connect_callback cb)
 {
   /* Initialize addr to localhost:torPort */

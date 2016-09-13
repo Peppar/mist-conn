@@ -45,9 +45,6 @@
     <ClCompile Include="src\client\cpp\io\rdv_socket.cpp">
       <Filter>Source Files\io</Filter>
     </ClCompile>
-    <ClCompile Include="src\client\cpp\io\socket.cpp">
-      <Filter>Source Files\io</Filter>
-    </ClCompile>
     <ClCompile Include="src\client\cpp\io\ssl_context.cpp">
       <Filter>Source Files\io</Filter>
     </ClCompile>
@@ -99,6 +96,21 @@
     <ClCompile Include="src\client\cpp\test.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\client\cpp\io\tcp_socket.cpp">
+      <Filter>Source Files\io</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\h2\websocket.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\crypto\pkcs12.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\crypto\hash.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\crypto\sha3.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\client\headers\conn.hpp">
@@ -108,9 +120,6 @@
       <Filter>Header Files\io</Filter>
     </ClInclude>
     <ClInclude Include="src\client\headers\io\rdv_socket.hpp">
-      <Filter>Header Files\io</Filter>
-    </ClInclude>
-    <ClInclude Include="src\client\headers\io\socket.hpp">
       <Filter>Header Files\io</Filter>
     </ClInclude>
     <ClInclude Include="src\client\headers\io\ssl_context.hpp">
@@ -169,6 +178,24 @@
     </ClInclude>
     <ClInclude Include="src\client\headers\error\mist.hpp">
       <Filter>Header Files\error</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\io\tcp_socket.hpp">
+      <Filter>Header Files\io</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\io\socket.hpp">
+      <Filter>Header Files\io</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\h2\websocket.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\crypto\hash.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\crypto\sha3.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\crypto\pkcs12.hpp">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

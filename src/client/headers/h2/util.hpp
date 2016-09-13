@@ -6,6 +6,7 @@
 #include <map>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 #include <boost/lexical_cast.hpp>
 #include <boost/numeric/conversion/cast.hpp>
@@ -28,7 +29,7 @@ using is_char_type = std::is_same<char,
 
 /* 
  * Since boost::lexcial_cast does not work for char types (std::uint8_t etc.),
- * we need to treat this as a special case.
+ * we need to treat this as a special case. TODO: Test
  */
 template<typename T, typename std::enable_if<is_char_type<T>::value>::type* = nullptr>
 boost::optional<T>
