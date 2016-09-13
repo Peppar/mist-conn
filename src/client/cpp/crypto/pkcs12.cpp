@@ -19,6 +19,7 @@
 #include "certdb.h"
 
 #include "error/mist.hpp"
+#include "error/nss.hpp"
 
 #include "memory/nss.hpp"
 
@@ -29,25 +30,54 @@ namespace crypto
 namespace
 {
 
+//c_unique_ptr<SECItem>
+//convertPassword(const std::string& password, bool toUnicode, bool swapBytes)
+//{
+//  SECItem *pwitem = nullptr;
+//  {
+//    const std::size_t stringBufferSize = password.length() + 1;
+//    const char* stringBuffer = password.c_str();
+//
+//    pwitem = SECITEM_AllocItem(nullptr, nullptr, stringBufferSize);
+//    assert(pwitem->len == stringBufferSize);
+//    pwitem->type = siAsciiString;
+//    std::copy(stringBuffer, stringBuffer + stringBufferSize,
+//      pwitem->data);
+//  }
+//  return pwitem;
+//}
 c_unique_ptr<SECItem>
 convertPassword(const std::string& in, bool toUnicode, bool swapBytes)
 {
-  const std::size_t bufLength = toUnicode ? 4 * in.size() : in.size();
-  std::vector<unsigned char> out(bufLength);
+  const std::size_t strBufLen = in.size() + 1;
+  unsigned char* strBufData
+    = reinterpret_cast<unsigned char*>(const_cast<char*>(in.c_str()));
+
+  const std::size_t encBufLen = toUnicode ? 4 * strBufLen : strBufLen;
+  std::vector<unsigned char> encBuf(encBufLen);
   unsigned int outLength;
 
-  if (PORT_UCS2_ASCIIConversion(toUnicode,
-    reinterpret_cast<unsigned char*>(const_cast<char*>(in.data())), in.size(),
-    out.data(), bufLength, &outLength, swapBytes) == PR_FALSE)
-    return nullptr;
+  if (PORT_UCS2_UTF8Conversion(toUnicode, strBufData, strBufLen,
+    encBuf.data(), encBufLen, &outLength) == PR_FALSE)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to convert password"));
+
+  if (swapBytes) {
+    std::uint16_t* ucs2Data = reinterpret_cast<std::uint16_t*>(encBuf.data());
+    std::size_t ucs2Len = outLength >> 1;
+    for (std::size_t n = 0; n < ucs2Len; ++n) {
+      ucs2Data[n] = ((ucs2Data[n] & 0xFF) << 8) | (ucs2Data[n] >> 8);
+    }
+  }
 
   c_unique_ptr<SECItem> pwitem;
   {
     pwitem = c_unique_ptr<SECItem>(
       reinterpret_cast<SECItem*>(PORT_ZAlloc(sizeof SECItem)));
+    pwitem->type = siBuffer;
     pwitem->len = outLength;
     pwitem->data = static_cast<unsigned char*>(PORT_Alloc(outLength));
-    std::copy(out.data(), out.data() + outLength, pwitem->data);
+    std::copy(encBuf.data(), encBuf.data() + outLength, pwitem->data);
   }
 
   return std::move(pwitem);
@@ -78,11 +108,11 @@ c_unique_ptr<SEC_PKCS12DecoderContext>
 initDecode(const std::string& data, const std::string& password,
   PK11SlotInfo* slot, c_unique_ptr<SECItem>& pwitem, void* wincx)
 {
-  bool swapUnicode = false;
+  bool toUnicode = true;
   bool swapBytes = false;
 
 #ifdef IS_LITTLE_ENDIAN
-  swapUnicode = true;
+  //swapBytes = true;
 #endif
 
   // Convert the password to Unicode...
@@ -90,7 +120,7 @@ initDecode(const std::string& data, const std::string& password,
   // it seems that there is already a bit of Unicode conversion going on:
   // https://dxr.mozilla.org/mozilla-central/source/security/nss/lib/pkcs12/p12d.c?q=SEC_PKCS12DecoderStart&redirect_type=direct#1201
   {
-    pwitem = convertPassword(password, true, swapBytes);
+    pwitem = convertPassword(password, toUnicode, swapBytes);
     if (!pwitem)
       BOOST_THROW_EXCEPTION(boost::system::system_error(
         make_mist_error(MIST_ERR_ASSERTION),
@@ -113,37 +143,29 @@ initDecode(const std::string& data, const std::string& password,
   return std::move(p12dcx);
 }
 
-void
-initSlot(PK11SlotInfo* slot, const std::string& slotPassword)
-{
-  if (PK11_NeedUserInit(slot)) {
-    PK11_InitPin(slot, static_cast<char*>(nullptr), slotPassword.c_str());
-  } else {
-    void* arg
-      = const_cast<void*>(reinterpret_cast<const void*>(&slotPassword));
-    if (PK11_Authenticate(slot, PR_TRUE, arg) != SECSuccess)
-      BOOST_THROW_EXCEPTION(boost::system::system_error(
-        make_mist_error(MIST_ERR_ASSERTION),
-        "Unable to authenticate to slot"));
-  }
-}
-
 } // namespace
 
 void
-importPKCS12(PK11SlotInfo* slot, const std::string& slotPassword,
-  const std::string& data, const std::string& dataPassword,
-  const std::string& nickname)
+importPKCS12(PK11SlotInfo* slot, const std::string& data,
+  const std::string& dataPassword, const std::string& nickname,
+  void* wincx)
 {
-  // Initialize the slot
-  initSlot(slot, slotPassword);
+  // This is mandatory, otherwise NSS will crash by trying to access
+  // freed memory.
+  SEC_PKCS12EnableCipher(PKCS12_RC4_40, 1);
+  SEC_PKCS12EnableCipher(PKCS12_RC4_128, 1);
+  SEC_PKCS12EnableCipher(PKCS12_RC2_CBC_40, 1);
+  SEC_PKCS12EnableCipher(PKCS12_RC2_CBC_128, 1);
+  SEC_PKCS12EnableCipher(PKCS12_DES_56, 1);
+  SEC_PKCS12EnableCipher(PKCS12_DES_EDE3_168, 1);
+  SEC_PKCS12SetPreferredCipher(PKCS12_DES_EDE3_168, 1);
 
   // Initialize the decoder. Note that the pwitem must live at least as long
   // as p12dcx is being used.
   c_unique_ptr<SECItem> pwitem;
   c_unique_ptr<SEC_PKCS12DecoderContext> p12dcx;
   {
-    p12dcx = initDecode(data, dataPassword, slot, pwitem, nullptr);
+    p12dcx = initDecode(data, dataPassword, slot, pwitem, wincx);
     if (!p12dcx)
       BOOST_THROW_EXCEPTION(boost::system::system_error(
         make_mist_error(MIST_ERR_ASSERTION),

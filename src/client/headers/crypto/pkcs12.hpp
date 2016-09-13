@@ -12,9 +12,9 @@ namespace crypto
 {
 
 void
-importPKCS12(PK11SlotInfo* slot, const std::string& slotPassword,
-  const std::string& data, const std::string& dataPassword,
-  const std::string& nickname);
+importPKCS12(PK11SlotInfo* slot, const std::string& data,
+  const std::string& dataPassword, const std::string& nickname,
+  void* wincx);
 
 } // namespace crypto
 } // namespace mist

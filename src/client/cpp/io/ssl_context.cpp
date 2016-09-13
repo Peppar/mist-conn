@@ -19,6 +19,7 @@
 #include <sslproto.h>
 #include <cert.h>
 
+#include <boost/filesystem.hpp>
 #include <boost/optional.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
@@ -133,26 +134,62 @@ SECU_ReadDER(SECItem *der, std::string data)
   }
 }
 
+void
+clearDatabaseDirectory(const std::string& dbdir, c_unique_ptr<PRDir> dir)
+{
+  std::vector<std::string> filesToDelete;
+  while (auto entry = PR_ReadDir(dir.get(), PR_SKIP_BOTH)) {
+    std::string filename(entry->name);
+    if (filename == "secmod.db"
+      || filename == "key3.db"
+      || filename == "cert8.db") {
+      std::string fullName = (boost::filesystem::path(dbdir) / filename).string();
+      filesToDelete.push_back(fullName);
+    }
+  }
+  for (auto& fileToDelete : filesToDelete) {
+    if (PR_Delete(fileToDelete.c_str()) != PR_SUCCESS)
+      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+        "Unable to delete old database files"));
+  }
+}
+
+void
+initializeDatabaseDirectory(const std::string& dbdir)
+{
+  auto dir = to_unique(PR_OpenDir(dbdir.c_str()));
+  if (dir) {
+    clearDatabaseDirectory(dbdir, std::move(dir));
+  } else {
+    // TODO: Check if the error really is DIR DOES NOT EXIST
+    if (PR_MkDir(dbdir.c_str(), 00700) != PR_SUCCESS)
+      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+        "Unable to create database directory"));
+  }
+}
+
 } // namespace
 
 /*
  * SSLContext
  */
-SSLContext::SSLContext(IOContext& ioCtx, const std::string& dbdir,
-  const std::string& slotPassword, const std::string& nickname)
-  : _ioCtx(ioCtx), _slotPassword(slotPassword), _nickname(nickname)
+SSLContext::SSLContext(IOContext& ioCtx, const std::string& dbdir)
+  : _ioCtx(ioCtx)
 {
+  _slotPassword = "abc";
+  _nickname = "mist_root";
+  initializeDatabaseDirectory(dbdir);
   initializeNSS(dbdir);
 }
 
-void SSLContext::installPrivateKey(const std::string& privateKey,
-  const std::string &privateKeyPassword)
+void
+SSLContext::loadPKCS12(const std::string& data,
+  const std::string& password)
 {
   //SECItem item;
   //auto binaryCertificate = SECU_ReadDER(&item, certificate);
-  auto slot = to_unique(PK11_GetInternalSlot());
-  crypto::importPKCS12(slot.get(), _slotPassword, privateKey,
-    privateKeyPassword, _nickname);
+  auto slot = internalSlot();
+  crypto::importPKCS12(slot.get(), data, password, _nickname, this);
 
   /*
 
@@ -163,6 +200,36 @@ void SSLContext::installPrivateKey(const std::string& privateKey,
   auto peerIt = _peers.insert({ keyHash,
     std::make_unique<Peer>(_ctx, nickname, std::move(publicKey)) });
   return *(peerIt.first->second);*/
+}
+
+void
+SSLContext::loadPKCS12File(const std::string& path,
+  const std::string& password)
+{
+  c_unique_ptr<PRFileDesc> fd;
+  {
+    fd = PR_Open(path.c_str(), PR_RDONLY, 0);
+    if (!fd)
+      BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+        "Unable to open PKCS12 file"));
+  }
+
+  std::string data;
+  {
+    std::array<std::uint8_t, 1024> buf;
+    while (true) {
+      auto n = PR_Read(fd.get(), buf.data(), buf.size());
+      if (n == 0)
+        break;
+      else if (n < 0)
+        BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+          "Unable to read PKCS12 file"));
+      else
+        data.insert(data.end(), buf.data(), buf.data() + n);
+    }
+  }
+
+  loadPKCS12(data, password);
 }
 
 IOContext &
@@ -179,7 +246,6 @@ std::pair<c_unique_ptr<CERTCertificate>,
           c_unique_ptr<SECKEYPrivateKey>>
 getAuthData(const std::string &nickname, void *wincx)
 {
-  std::cerr << "get_auth_data" << std::endl;
   if (!nickname.empty()) {
     auto cert = to_unique(CERT_FindUserCertByUsage(
       CERT_GetDefaultCertDB(), const_cast<char *>(nickname.c_str()),
@@ -196,7 +262,7 @@ getAuthData(const std::string &nickname, void *wincx)
                             to_unique<SECKEYPrivateKey>());
     
     return std::make_pair(std::move(cert), std::move(privKey));
-    
+  
   } else {
     /* No name given, automatically find the right cert. */
     auto names = to_unique(CERT_GetCertNicknames(CERT_GetDefaultCertDB(),
@@ -300,15 +366,29 @@ SSLContext::initializeNSS(const std::string &dbdir)
     [](PK11SlotInfo *info, PRBool retry, void *arg)
     -> char *
   {
-    SSLContext &sslCtx = *static_cast<SSLContext *>(arg);
-    boost::optional<std::string> password = sslCtx.getPassword(info, retry);
-    if (password) {
-      /* Use PL_strdup; NSS will try to free the pointer later. */
-      return PL_strdup(password->c_str());
+    SSLContext& sslCtx = *static_cast<SSLContext *>(arg);
+    if (!retry) {
+      return PL_strdup(sslCtx._slotPassword.c_str());
     } else {
       return nullptr;
     }
   });
+}
+
+c_unique_ptr<PK11SlotInfo>
+SSLContext::internalSlot()
+{
+  auto slot = to_unique(PK11_GetInternalKeySlot());
+  if (PK11_NeedUserInit(slot.get())) {
+    PK11_InitPin(slot.get(), static_cast<char*>(nullptr), _slotPassword.c_str());
+  } else {
+    void* arg = reinterpret_cast<void*>(this);
+    if (PK11_Authenticate(slot.get(), PR_TRUE, arg) != SECSuccess)
+      BOOST_THROW_EXCEPTION(boost::system::system_error(
+        make_mist_error(MIST_ERR_ASSERTION),
+        "Unable to authenticate to slot"));
+  }
+  return std::move(slot);
 }
 
 /* Upgrades the NSPR socket file descriptor to TLS */
@@ -343,7 +423,6 @@ SSLContext::getClientCert(SSLSocket &socket, CERTDistNames *caNames,
                           CERTCertificate **pRetCert,
                           SECKEYPrivateKey **pRetKey)
 {
-  std::cerr << "nss_get_client_cert" << std::endl;
   auto authData = getAuthData(_nickname, SSL_RevealPinArg(socket.fileDesc()));
   if (!authData.first || !authData.second) {
     /* Private key or certificate was not found */
@@ -377,17 +456,16 @@ SSLContext::authCertificate(SSLSocket &socket, PRBool checkSig,
   return SECSuccess;
 }
 
-/* Called when NSS wants us to supply a password */
-boost::optional<std::string>
-SSLContext::getPassword(PK11SlotInfo *info, PRBool retry)
-{
-  /* Use PL_strdup; NSS will try to free the pointer later. */
-  std::cerr << "password func" << std::endl;
-  if (!retry)
-    return std::string("mist");
-  else
-    return boost::none;
-}
+///* Called when NSS wants us to supply a password */
+//boost::optional<std::string>
+//SSLContext::getPassword(PK11SlotInfo *info, PRBool retry)
+//{
+//  /* Use PL_strdup; NSS will try to free the pointer later. */
+//  if (!retry)
+//    return std::string("mist");
+//  else
+//    return boost::none;
+//}
 
 namespace
 {

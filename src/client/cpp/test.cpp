@@ -44,26 +44,26 @@
 namespace
 {
 
-  mist::h2::generator_callback
-    make_generator(std::string body)
-  {
-    std::size_t sent = 0;
+mist::h2::generator_callback
+make_generator(std::string body)
+{
+  std::size_t sent = 0;
 
-    return [body, sent](std::uint8_t *data, std::size_t length,
-      std::uint32_t *flags) mutable -> ssize_t
-    {
-      std::size_t remaining = body.size() - sent;
-      if (remaining == 0) {
-        //*flags |= NGHTTP2_DATA_FLAG_EOF;
-        return NGHTTP2_ERR_DEFERRED;
-      } else {
-        std::size_t nsend = std::min(remaining, length);
-        std::copy(body.data() + sent, body.data() + sent + nsend, data);
-        sent += nsend;
-        return nsend;
-      }
-    };
-  }
+  return [body, sent](std::uint8_t *data, std::size_t length,
+    std::uint32_t *flags) mutable -> ssize_t
+  {
+    std::size_t remaining = body.size() - sent;
+    if (remaining == 0) {
+      //*flags |= NGHTTP2_DATA_FLAG_EOF;
+      return NGHTTP2_ERR_DEFERRED;
+    } else {
+      std::size_t nsend = std::min(remaining, length);
+      std::copy(body.data() + sent, body.data() + sent + nsend, data);
+      sent += nsend;
+      return nsend;
+    }
+  };
+}
 
 } // namespace
 
@@ -79,9 +79,9 @@ main(int argc, char **argv)
   boost::filesystem::path torPath(argv[4]);
 
   mist::io::IOContext ioCtx;
-  mist::io::SSLContext sslCtx(ioCtx, (rootDir / "key_db").string(),
-    "myPassword", "mist_root");
+  mist::io::SSLContext sslCtx(ioCtx, (rootDir / "key_db").string());
   mist::ConnectContext ctx(sslCtx); //, (rootDir / "peers").string());
+  sslCtx.loadPKCS12File((rootDir / "key.p12").string(), "mist");
   ctx.addPeer("-----BEGIN PUBLIC KEY-----\n"
     "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIdvWMNwaGjq+KanJxZm4QRzNA\n"
     "VXDMIGb1jz9zAALG39S9kU/dTlpXHgN5clTr2x3qhOVqmFbEMy1yQYMbm66X/Jfk\n"

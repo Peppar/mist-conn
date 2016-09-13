@@ -52,6 +52,9 @@ private:
   /* Initialize NSS with the given database directory */
   void initializeNSS(const std::string& dbdir);
 
+  /* Makes sure that the internal slot is initialized and returns it */
+  c_unique_ptr<PK11SlotInfo> internalSlot();
+
   /* Upgrades the NSPR socket file descriptor to TLS */
   void initializeSecurity(c_unique_ptr<PRFileDesc>& fd);
   
@@ -67,18 +70,16 @@ private:
   SECStatus authCertificate(SSLSocket& socket, PRBool checkSig,
                             PRBool isServer);
 
-  /* Called when NSS wants us to supply a password */
-  boost::optional<std::string> getPassword(PK11SlotInfo* info, PRBool retry);
+  ///* Called when NSS wants us to supply a password */
+  //boost::optional<std::string> getPassword(PK11SlotInfo* info, PRBool retry);
 
 public:
 
-  SSLContext(IOContext& ioCtx, const std::string& dbdir,
-    const std::string& slotPassword, const std::string& nickname);
+  SSLContext(IOContext& ioCtx, const std::string& dbdir);
 
-  void installPrivateKey(const std::string& privateKey,
-    const std::string &privateKeyPassword);
-  //void setCertificateAndPrivateKey(const std::string& cert,
-  //  const std::string& privateKey);
+  void loadPKCS12(const std::string& data, const std::string& password);
+
+  void loadPKCS12File(const std::string& path, const std::string& password);
 
   IOContext& ioCtx();
 
