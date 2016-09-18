@@ -29,3 +29,13 @@
 *.app
 /Debug
 /x64/Debug
+/build
+/deps
+/keydb
+/node_modules
+/undefined
+/workdir
+/test.js
+/paths.bat
+/key.p12
+/dllpaths.bat

@@ -190,7 +190,7 @@ SECU_ReadDER(SECItem *der, std::string data)
   char *asc, *body;
 
   /* Read in ascii data */
-  asc = (char *)data.data();
+  asc = const_cast<char*>(data.data());
   if (!asc) {
     fprintf(stderr, "unable to read data from input file\n");
     return SECFailure;
@@ -220,6 +220,7 @@ SECU_ReadDER(SECItem *der, std::string data)
   if (rv) {
     return SECFailure;
   }
+  return SECSuccess;
 }
 
 std::string
@@ -432,13 +433,24 @@ Peer& PeerDb::addPeer(const std::string& derPublicKey,
   const std::string & nickname)
 {
   SECItem item;
-  auto binaryPublicKey = SECU_ReadDER(&item, derPublicKey);
+  if (SECU_ReadDER(&item, derPublicKey) != SECSuccess)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to read DER data"));
+
   //SECItem item{ siBuffer,
   //  reinterpret_cast<unsigned char*>(const_cast<char*>(derPublicKey.data())),
   //  derPublicKey.length() };
 
   auto publicKeyInfo = to_unique(SECKEY_DecodeDERSubjectPublicKeyInfo(&item));
+  if (!publicKeyInfo)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to decode public key"));
+
   auto publicKey = to_unique(SECKEY_ExtractPublicKey(publicKeyInfo.get()));
+  if (!publicKey)
+    BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
+      "Unable to extract public key"));
+
   auto keyHash = pubKeyHash(publicKey.get());
 
   auto peerIt = peers.insert({ keyHash,

@@ -40,6 +40,12 @@
     <Filter Include="Source Files\h2">
       <UniqueIdentifier>{90e45648-77df-465a-97b2-cab88639bc51}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\crypto">
+      <UniqueIdentifier>{2627ff6e-e125-4443-8709-325c2b88535c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\crypto">
+      <UniqueIdentifier>{94a113db-d56d-4009-ab4c-f16340618b9c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\client\cpp\io\rdv_socket.cpp">
@@ -99,17 +105,20 @@
     <ClCompile Include="src\client\cpp\io\tcp_socket.cpp">
       <Filter>Source Files\io</Filter>
     </ClCompile>
-    <ClCompile Include="src\client\cpp\h2\websocket.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\client\cpp\crypto\pkcs12.cpp">
+    <ClCompile Include="src\client\cpp\node\module.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\client\cpp\crypto\hash.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>Source Files\crypto</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\crypto\pkcs12.cpp">
+      <Filter>Source Files\crypto</Filter>
     </ClCompile>
     <ClCompile Include="src\client\cpp\crypto\sha3.c">
-      <Filter>Source Files</Filter>
+      <Filter>Source Files\crypto</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client\cpp\h2\websocket.cpp">
+      <Filter>Source Files\h2</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -185,17 +194,21 @@
     <ClInclude Include="src\client\headers\io\socket.hpp">
       <Filter>Header Files\io</Filter>
     </ClInclude>
-    <ClInclude Include="src\client\headers\h2\websocket.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="src\client\headers\crypto\hash.hpp">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="src\client\headers\crypto\pkcs12.hpp">
+      <Filter>Header Files\crypto</Filter>
     </ClInclude>
     <ClInclude Include="src\client\headers\crypto\sha3.h">
-      <Filter>Header Files</Filter>
+      <Filter>Header Files\crypto</Filter>
     </ClInclude>
-    <ClInclude Include="src\client\headers\crypto\pkcs12.hpp">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="src\client\headers\crypto\hash.hpp">
+      <Filter>Header Files\crypto</Filter>
     </ClInclude>
+    <ClInclude Include="src\client\headers\h2\websocket.hpp">
+      <Filter>Header Files\h2</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="binding.gyp" />
+    <None Include="package.json" />
   </ItemGroup>
 </Project>
