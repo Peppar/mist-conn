@@ -20,6 +20,276 @@
 #include "io/ssl_context.hpp"
 #include "conn.hpp"
 
+namespace detail
+{
+
+template<typename T>
+struct NodeValueConverter
+{
+  static v8::Local<v8::Value> conv(T v)
+  {
+    static_assert(false, "No converter for this type");
+    return v8::Local<v8::Value>();
+  }
+};
+
+template<typename T, typename Enable = void>
+struct NodeValueDecayHelper;
+
+template<typename T>
+struct NodeValueDecayHelper<T,
+  typename std::enable_if<std::is_reference<T>::value>::type>
+{
+  using type = typename std::add_pointer<
+    typename std::add_const<typename std::decay_t<T>>::type>::type;
+
+  static type decay(T value) { return &value; }
+};
+
+template<typename T>
+struct NodeValueDecayHelper<T,
+  typename std::enable_if<!std::is_reference<T>::value>::type>
+{
+  using type = typename std::add_const<typename std::decay_t<T>>::type;
+
+  static type decay(T value) { return value; }
+};
+
+template<typename T>
+using node_decay_t = typename NodeValueDecayHelper<T>::type;
+
+template<typename T>
+node_decay_t<T> nodeDecay(T value)
+{
+  return NodeValueDecayHelper<T>::decay(value);
+}
+
+template<>
+struct NodeValueConverter<const std::string*>
+{
+  static v8::Local<v8::Value> conv(const std::string* v)
+  {
+    return Nan::New(*v).ToLocalChecked();
+  }
+};
+
+template<>
+struct NodeValueConverter<const int>
+{
+  static v8::Local<v8::Value> conv(const int v)
+  {
+    return Nan::New(v);
+  }
+};
+
+} // namespace detail
+
+template<typename T>
+v8::Local<v8::Value> conv(T v)
+{
+  return ::detail::NodeValueConverter<::detail::node_decay_t<T>>::conv(
+    ::detail::nodeDecay<T>(v));
+}
+
+namespace detail
+{
+
+struct AsyncCall
+{
+  uv_async_t handle;
+  std::function<void()> callback;
+
+  AsyncCall(std::function<void()> callback)
+    : callback(std::move(callback))
+  {
+    handle.data = this;
+  };
+
+  static void operator delete(void *p)
+  {
+    /* TODO: This custom operator delete is either really cool or really awful.
+    Find out which one it is */
+    AsyncCall *ac = static_cast<AsyncCall*>(p);
+
+    /* libuv requires that uv_close be called before freeing handle memory */
+    uv_close(reinterpret_cast<uv_handle_t*>(&ac->handle),
+      [](uv_handle_t *handle)
+    {
+      /* Avoid calling destructor here; it was called for the first delete */
+      ::operator delete(static_cast<AsyncCall*>(handle->data));
+    });
+  }
+};
+
+} // namespace detail
+
+void
+asyncCall(std::function<void()> callback)
+{
+  ::detail::AsyncCall *ac = new ::detail::AsyncCall(std::move(callback));
+  uv_async_init(uv_default_loop(), &ac->handle,
+    [](uv_async_t *handle)
+  {
+    std::unique_ptr<::detail::AsyncCall>
+      ac(static_cast<::detail::AsyncCall*>(handle->data));
+    ac->callback();
+  });
+  uv_async_send(&ac->handle);
+}
+
+template<typename T>
+using CopyablePersistent
+  = Nan::Persistent<T, v8::CopyablePersistentTraits<T>>;
+/*
+template<typename... Args,
+  typename std::enable_if<sizeof...(Args) == 0>::type* = nullptr>
+void
+asyncCallNode(CopyablePersistent<v8::Function> pfunc)
+{
+  asyncCall([pfunc]() mutable
+  {
+    v8::HandleScope scope(globalIsolate);
+    Nan::Callback cb(Nan::New(pfunc));
+    cb(0, nullptr);
+  });
+}
+
+template<typename... Args,
+  typename std::enable_if<sizeof...(Args) == 0>::type* = nullptr>
+void
+asyncCallNode(v8::Local<v8::Function> func)
+{
+  asyncCallNode(CopyablePersistent<v8::Function>(func));
+}
+
+template<typename... Args,
+  typename std::enable_if<sizeof...(Args) != 0>::type* = nullptr>
+void
+asyncCallNode(CopyablePersistent<v8::Function> pfunc, Args&&... args)
+{
+  // We need to keep a vector of persistent arguments throughout the call
+  std::vector<CopyablePersistent<v8::Value>> pargs
+  { CopyablePersistent<v8::Value>(args)... };
+  asyncCall(
+    [pfunc, pargs(std::move(pargs))]() mutable
+  {
+    constexpr const std::size_t argCount = sizeof...(Args);
+
+    v8::HandleScope scope(globalIsolate);
+    Nan::Callback cb(Nan::New(pfunc));
+    std::vector<v8::Local<v8::Value>> arguments(argCount);
+    std::transform(pargs.begin(), pargs.end(), arguments.begin(),
+      &Nan::New<v8::Value>);
+    cb(arguments.size(), arguments.data());
+  });
+}
+
+template<typename... Args,
+  typename std::enable_if<sizeof...(Args) != 0>::type* = nullptr>
+void
+asyncCallNode(v8::Local<v8::Function> func, Args&&... args)
+{
+  v8::HandleScope scope(globalIsolate);
+  asyncCallNode(CopyablePersistent<v8::Function>(func),
+    std::forward<Args>(args)...);
+}*/
+
+namespace detail
+{
+
+template<int...>
+struct seq {};
+
+template<int N, int... S>
+struct gens : gens<N - 1, N - 1, S...> {};
+
+template<int... S>
+struct gens<0, S...> {
+  typedef seq<S...> type;
+};
+
+template<typename... Args>
+struct MakeAsyncCallbackHelper
+{
+  using packed_args_type = std::tuple<Args...>;
+  using callback_type = std::function<void(v8::Local<v8::Function>, Args...)>;
+
+  template<int ...S>
+  static void call(callback_type cb, v8::Local<v8::Function> func,
+    packed_args_type args, seq<S...>)
+  {
+    cb(std::move(func), std::get<S>(args)...);
+  }
+
+  template<int ...S>
+  static void callNode(v8::Local<v8::Function> func,
+    packed_args_type args, seq<S...>)
+  {
+    Nan::Callback cb(func);
+    std::array<v8::Local<v8::Value>, sizeof...(Args)> nodeArgs{
+      conv<std::tuple_element<S, packed_args_type>::type>(
+        std::get<S>(args))...
+    };
+    cb(nodeArgs.size(), nodeArgs.data());
+  }
+
+  static std::function<void(Args...)> make(v8::Local<v8::Function> func,
+    callback_type cb)
+  {
+    Nan::HandleScope scope;
+    auto pfunc(std::make_shared<Nan::Persistent<v8::Function>>(func));
+    return
+      [pfunc, cb(std::move(cb))]
+    (Args&&... args)
+    {
+      packed_args_type packed{ std::forward<Args>(args)... };
+      asyncCall(
+        [cb, pfunc, packed(std::move(packed))]() mutable
+      {
+        Nan::HandleScope scope;
+        call(std::move(cb), Nan::New(*pfunc), std::move(packed),
+          typename gens<sizeof...(Args)>::type());
+      });
+    };
+  }
+
+  static std::function<void(Args...)> makeAuto(v8::Local<v8::Function> func)
+  {
+    Nan::HandleScope scope;
+    auto pfunc(std::make_shared<Nan::Persistent<v8::Function>>(func));
+    return
+      [pfunc](Args&&... args)
+    {
+      packed_args_type packed{ std::forward<Args>(args)... };
+      asyncCall(
+        [pfunc, packed(std::move(packed))]() mutable
+      {
+        Nan::HandleScope scope;
+        callNode(Nan::New(*pfunc), std::move(packed),
+          typename gens<sizeof...(Args)>::type());
+      });
+    };
+  }
+};
+
+}
+
+template<typename... Args>
+std::function<void(Args...)>
+makeAsyncCallback(v8::Local<v8::Function> func,
+  std::function<void(v8::Local<v8::Function>, Args...)> cb)
+{
+  return ::detail::MakeAsyncCallbackHelper<Args...>::make(std::move(func),
+    std::move(cb));
+}
+
+template<typename... Args>
+std::function<void(Args...)>
+makeAsyncCallback(v8::Local<v8::Function> func)
+{
+  return ::detail::MakeAsyncCallbackHelper<Args...>::makeAuto(std::move(func));
+}
+
 namespace
 {
 
@@ -53,6 +323,7 @@ mist::io::IOContext ioCtx;
 std::unique_ptr<mist::io::SSLContext> sslCtx;
 std::unique_ptr<mist::ConnectContext> connCtx;
 
+/*
 template<typename T,
   typename std::enable_if<
     std::is_same<std::remove_cv<T>, std::string>::value>::type* = nullptr>
@@ -69,243 +340,25 @@ T
 fromV8(v8::Handle<v8::Value> v)
 {
   return static_cast<T>(v->IntegerValue());
-}
+}*/
 
+/*
 template<typename T,
   typename std::enable_if<
     std::is_same<std::remove_cv<T>, std::string>::value>::type* = nullptr>
 v8::Local<v8::Value>
-toNode(T v)
+nodeValueConvert(T v)
 {
   return Nan::New(v);
-}
+}*/
 
+/*
 template<typename T,
   typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
 v8::Local<v8::Value>
-toNode(T v)
+nodeValueConvert(T v)
 {
   return Nan::New(v);
-}
-
-struct AsyncCall
-{
-  uv_async_t handle;
-  std::function<void()> callback;
-
-  AsyncCall(std::function<void()> callback)
-    : callback(std::move(callback))
-  {
-    handle.data = this;
-  };
-  
-  static void operator delete(void *p)
-  {
-    /* TODO: This custom operator delete is either really cool or really awful.
-    Find out which one it is */
-    AsyncCall *ac = static_cast<AsyncCall*>(p);
-    
-    /* libuv requires that uv_close be called before freeing handle memory */
-    uv_close(reinterpret_cast<uv_handle_t*>(&ac->handle),
-      [](uv_handle_t *handle)
-    {
-      /* Avoid calling destructor here; it was called for the first delete */
-      ::operator delete(static_cast<AsyncCall*>(handle->data));
-    });
-  }
-};
-
-void
-asyncCall(std::function<void()> callback)
-{
-  AsyncCall *ac = new AsyncCall(std::move(callback));
-  uv_async_init(uv_default_loop(), &ac->handle,
-    [](uv_async_t *handle)
-  {
-    std::unique_ptr<AsyncCall> ac(static_cast<AsyncCall*>(handle->data));
-    ac->callback();
-  });
-  uv_async_send(&ac->handle);
-}
-
-template<typename T>
-using CopyablePersistent
-  = Nan::Persistent<T, v8::CopyablePersistentTraits<T>>;
-
-template<typename... Args,
-  typename std::enable_if<sizeof...(Args) == 0>::type* = nullptr>
-void
-asyncCallNode(CopyablePersistent<v8::Function> pfunc)
-{
-  asyncCall([pfunc]() mutable
-  {
-    v8::HandleScope scope(globalIsolate);
-    Nan::Callback cb(Nan::New(pfunc));
-    cb(0, nullptr);
-  });
-}
-
-template<typename... Args,
-  typename std::enable_if<sizeof...(Args) == 0>::type* = nullptr>
-void
-asyncCallNode(v8::Local<v8::Function> func)
-{
-  asyncCallNode(CopyablePersistent<v8::Function>(func));
-}
-/*
-template<typename... Args>
-struct callbackPack
-{
-  CopyablePersistent<v8::Function> callback;
-  std::array<CopyablePersistent<v8::Value>, sizeof...Args> args;
-
-  callbackPack(v8::Handle<v8::Function> callback, Args&&... args)
-    : callback(CopyablePersistent<v8::Function>(callback))
-    , args{ CopyablePersistent<v8::Value>(args)... }
-  {
-  }
-};
-*/
-
-//template<typename... Args,
-//  typename std::enable_if<sizeof...(Args) != 0>::type* = nullptr>
-//  void
-//  asyncCallNode(v8::Local<v8::Function> func, Args&&... args)
-//{
-//  //constexpr const std::size_t argCount = sizeof...(Args);
-//
-//  /* We need to keep a vector of persistent arguments throughout the call */
-//  std::vector<CopyablePersistent<v8::Value>> pargs
-//  { CopyablePersistent<v8::Value>(args)... };
-//  asyncCall(
-//    [pfunc(CopyablePersistent<v8::Function>(func)),
-//    pargs(std::move(pargs))]() mutable
-//  {
-//    constexpr const std::size_t argCount = sizeof...(Args);
-//
-//    v8::Isolate *isolate = v8::Isolate::GetCurrent();
-//    v8::HandleScope handle_scope(isolate);
-//
-//    //auto cb(Nan::Callback(Nan::New(pfunc)));
-//    std::vector<v8::Local<v8::Value>> arguments(argCount);
-//    std::transform(pargs.begin(), pargs.end(), arguments.begin(),
-//      &Nan::New<v8::Local<v8::Object>>);
-//    //cb(argCount, arguments.data());
-//  });
-//}
-
-template<typename... Args,
-  typename std::enable_if<sizeof...(Args) != 0>::type* = nullptr>
-void
-asyncCallNode(CopyablePersistent<v8::Function> pfunc, Args&&... args)
-{
-  /* We need to keep a vector of persistent arguments throughout the call */
-  std::vector<CopyablePersistent<v8::Value>> pargs
-    { CopyablePersistent<v8::Value>(args)... };
-  asyncCall(
-    [pfunc, pargs(std::move(pargs))]() mutable
-  {
-    constexpr const std::size_t argCount = sizeof...(Args);
-
-    v8::HandleScope scope(globalIsolate);
-    Nan::Callback cb(Nan::New(pfunc));
-    std::vector<v8::Local<v8::Value>> arguments(argCount);
-    std::transform(pargs.begin(), pargs.end(), arguments.begin(),
-      &Nan::New<v8::Value>);
-    cb(arguments.size(), arguments.data());
-  });
-}
-
-template<typename... Args,
-  typename std::enable_if<sizeof...(Args) != 0>::type* = nullptr>
-void
-asyncCallNode(v8::Local<v8::Function> func, Args&&... args)
-{
-  v8::HandleScope scope(globalIsolate);
-  asyncCallNode(CopyablePersistent<v8::Function>(func),
-    std::forward<Args>(args)...);
-}
-
-template<int...>
-struct seq {};
-
-template<int N, int... S>
-struct gens : gens<N - 1, N - 1, S...> {};
-
-template<int... S>
-struct gens<0, S...> {
-  typedef seq<S...> type;
-};
-
-template<typename... Args>
-struct MakeAsyncCallbackHelper
-{
-  using packed_args_type = std::tuple<Args...>;
-  using callback_type = std::function<void(v8::Local<v8::Function>, Args...)>;
-
-  template<int ...S>
-  static void call(callback_type cb, v8::Local<v8::Function> func,
-    packed_args_type args, seq<S...>)
-  {
-    cb(std::move(func), std::get<S>(args) ...);
-  }
-
-  static std::function<void(Args...)> make(v8::Local<v8::Function> func,
-    callback_type cb)
-  {
-    Nan::HandleScope scope;
-    auto pfunc(std::make_shared<Nan::Persistent<v8::Function>>(func));
-    return
-      [pfunc, cb(std::move(cb))]
-      (Args&&... args)
-    {
-      packed_args_type packed{ std::forward<Args>(args)... };
-      asyncCall(
-        [cb, pfunc, packed(std::move(packed))]() mutable
-      {
-        Nan::HandleScope scope;
-        call(std::move(cb), Nan::New(*pfunc), std::move(packed),
-          typename gens<sizeof...(Args)>::type());
-      });
-    };
-  }
-};
-
-template<typename... Args>
-std::function<void(Args...)>
-makeAsyncCallback(v8::Local<v8::Function> func,
-  std::function<void(v8::Local<v8::Function>, Args...)> cb)
-{
-  return MakeAsyncCallbackHelper<Args...>::make(std::move(func),
-    std::move(cb));
-}
-
-//template<int ...S>
-//void callFunc(std::tuple<packedArgs>seq<S...>) {
-//  func(std::get<S>(params) ...);
-//}
-
-/*template<typename... Args>
-std::function<void(Args...)>
-makeAsyncCallback(v8::Local<v8::Function> func,
-  std::function<v8::Local<v8::Function>, void(Args...)>)
-{
-  //  asyncCallNode(pfunc, Nan::New<v8::String>(onionAddress).ToLocalChecked());
-  v8::HandleScope scope(globalIsolate);
-  return
-    [pfunc(CopyablePersistent<v8::Function>(func))]
-    (Args&&... args) -> void
-    {
-      std::tuple<Args...> packedArgs{ std::forward<Args>(args)... };
-      //v8::HandleScope scope(globalIsolate);
-      asyncCall([pfunc, packedArgs]()
-      {
-        Nan::Callback cb(Nan::New(pfunc));
-        //std::vector<v8::Handle<v8::Value>> nodeArgs(sizeof...(Args));
-        //std::transform(packgedArgs.begin(), packedArgs.end(), )
-        asyncCallNode(Nan::New(pfunc), toNode<Args>(args)...);
-      });
-    };
 }*/
 
 } // namespace
@@ -336,7 +389,7 @@ public:
     tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
     SetPrototypeMethod(tpl, "getHandle", GetHandle);
-    SetPrototypeMethod(tpl, "callMe", CallMe);
+    //SetPrototypeMethod(tpl, "callMe", CallMe);
     SetPrototypeMethod(tpl, "getValue", GetValue);
 
     constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
@@ -365,14 +418,14 @@ private:
     Quorve* obj = Nan::ObjectWrap::Unwrap<Quorve>(info.Holder());
     info.GetReturnValue().Set(obj->handle());
   }
-
+  /*
   static NAN_METHOD(CallMe)
   {
     Quorve* obj = Nan::ObjectWrap::Unwrap<Quorve>(info.Holder());
     auto callback = v8::Local<v8::Function>::Cast(info[0]);
     asyncCallNode(callback);
     //info.GetReturnValue().Set(obj->handle());
-  }
+  }*/
 
   static NAN_METHOD(GetValue)
   {
@@ -477,6 +530,29 @@ private:
   }
 };
 
+namespace detail
+{
+
+template<>
+struct NodeValueConverter<const mist::Peer::ConnectionStatus>
+{
+  static v8::Local<v8::Value> conv(const mist::Peer::ConnectionStatus v)
+  {
+    return Nan::New(static_cast<int>(v));
+  }
+};
+
+template<>
+struct NodeValueConverter<const mist::Peer*>
+{
+  static v8::Local<v8::Value> conv(const mist::Peer* v)
+  {
+    return Peer::FromPtr(const_cast<mist::Peer*>(v));
+  }
+};
+
+} // namespace detail
+
 class ServiceSingleton
 {
 private:
@@ -550,7 +626,8 @@ private:
 
     auto func = v8::Local<v8::Function>::Cast(info[0]);
     self.setOnPeerConnectionStatus(
-      makeAsyncCallback<mist::Peer&, mist::Peer::ConnectionStatus>(
+      makeAsyncCallback<mist::Peer&, mist::Peer::ConnectionStatus>(func));
+      /*makeAsyncCallback<mist::Peer&, mist::Peer::ConnectionStatus>(
         func, [](v8::Local<v8::Function> func, mist::Peer& peer,
           mist::Peer::ConnectionStatus status) -> void
       {
@@ -560,23 +637,7 @@ private:
           Peer::FromPtr(&peer), Nan::New(static_cast<int>(status))
         };
         cb(parameters.size(), parameters.data());
-      }));
-
-    /*std::function<void(v8::Local<v8::Function>,
-       int, int)> fn = [](v8::Local<v8::Function> f, int a, int b) -> void
-    {
-    };
-    self.setOnPeerConnectionStatus(
-      makeAsyncCallback<int, int>(
-        func, fn));*/
-/*      [pfunc(CopyablePersistent<v8::Function>(func))]
-      (mist::Peer& peer, mist::Peer::ConnectionStatus status)
-    {
-      // TODO: Some kind of lock here..?
-      v8::HandleScope scope(globalIsolate);
-      asyncCallNode(pfunc, Peer::FromPtr(&peer),
-      Nan::New(static_cast<int>(status)));
-    });*/
+      }));*/
   }
 
   /*
@@ -773,12 +834,14 @@ NAN_METHOD(onionAddress)
   try {
     auto func = v8::Local<v8::Function>::Cast(info[0]);
     connCtx->onionAddress(
+      makeAsyncCallback<const std::string&>(func));
+    /*
       [pfunc(CopyablePersistent<v8::Function>(func))]
       (const std::string& onionAddress)
     {
       Nan::HandleScope scope;
       asyncCallNode(pfunc, Nan::New<v8::String>(onionAddress).ToLocalChecked());
-    });
+    });*/
   } catch (boost::exception &) {
     std::cerr
       << "Unexpected exception, diagnostic information follows:" << std::endl
