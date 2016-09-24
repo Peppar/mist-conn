@@ -183,6 +183,7 @@
     <ClCompile Include="src\client\cpp\io\tcp_socket.cpp" />
     <ClCompile Include="src\client\cpp\io\ssl_context.cpp" />
     <ClCompile Include="src\client\cpp\io\ssl_socket.cpp" />
+    <ClCompile Include="src\client\cpp\node\async.cpp" />
     <ClCompile Include="src\client\cpp\node\module.cpp" />
     <ClCompile Include="src\client\cpp\test.cpp" />
     <ClCompile Include="src\client\cpp\tor\tor.cpp" />
@@ -215,6 +216,8 @@
     <ClInclude Include="src\client\headers\memory\base.hpp" />
     <ClInclude Include="src\client\headers\memory\nghttp2.hpp" />
     <ClInclude Include="src\client\headers\memory\nss.hpp" />
+    <ClInclude Include="src\client\headers\node\async.hpp" />
+    <ClInclude Include="src\client\headers\node\convert.hpp" />
     <ClInclude Include="src\client\headers\tor\tor.hpp" />
   </ItemGroup>
   <ItemGroup>

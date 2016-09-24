@@ -120,6 +120,9 @@
     <ClCompile Include="src\client\cpp\h2\websocket.cpp">
       <Filter>Source Files\h2</Filter>
     </ClCompile>
+    <ClCompile Include="src\client\cpp\node\async.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\client\headers\conn.hpp">
@@ -205,6 +208,12 @@
     </ClInclude>
     <ClInclude Include="src\client\headers\h2\websocket.hpp">
       <Filter>Header Files\h2</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\node\async.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client\headers\node\convert.hpp">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

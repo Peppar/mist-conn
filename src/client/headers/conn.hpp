@@ -49,7 +49,7 @@ public:
   enum class ConnectionDirection { Client, Server };
   enum class ConnectionStatus { Disconnected, Connected };
 
-  Peer(ConnectContext &ctx, std::string nickname,
+  Peer(ConnectContext& ctx, std::string nickname,
     c_unique_ptr<SECKEYPublicKey> pubKey);
 
   void connection(std::shared_ptr<io::Socket> socket,
@@ -60,7 +60,7 @@ public:
 
   const std::string nickname() const;
 
-  const SECKEYPublicKey *pubKey() const;
+  const SECKEYPublicKey* pubKey() const;
 
   const address_list &addresses() const;
 
@@ -75,7 +75,7 @@ private:
 
   friend class ConnectContext;
 
-  h2::ClientSession &clientSession();
+  h2::ClientSession& clientSession();
 
   std::shared_ptr<io::Socket> _socket;
   std::shared_ptr<h2::ServerSession> _serverSession;
@@ -85,7 +85,7 @@ private:
 
   //void onRequest(h2::ServerRequest &request);
 
-  ConnectContext &_ctx;
+  ConnectContext& _ctx;
   std::string _nickname;
   c_unique_ptr<SECKEYPublicKey> _pubKey;
   address_list _addresses;
@@ -101,13 +101,13 @@ private:
 
 public:
 
-  boost::optional<Peer&> findByKey(SECKEYPublicKey *key);
+  boost::optional<Peer&> findByKey(SECKEYPublicKey* key);
   boost::optional<Peer&> findByNickname(std::string nickname);
 
-  PeerDb(ConnectContext &ctx, const std::string &directory);
-  PeerDb(ConnectContext &ctx);
+  PeerDb(ConnectContext& ctx, const std::string& directory);
+  PeerDb(ConnectContext& ctx);
 
-  Peer& addPeer(const std::string &derPublicKey, const std::string &nickname);
+  Peer& addPeer(const std::string& derPublicKey, const std::string& nickname);
 
 };
 
@@ -131,7 +131,7 @@ public:
 
   void setOnPeerRequest(peer_request_callback cb);
 
-  void submit(Peer &peer, std::string method, std::string path,
+  void submit(Peer& peer, std::string method, std::string path,
     peer_submit_callback cb);
 
   void setOnWebSocket(peer_websocket_callback cb);
@@ -139,16 +139,16 @@ public:
   void openWebSocket(Peer& peer, std::string path,
     peer_websocket_callback cb);
 
-  Service(ConnectContext &ctx, std::string name);
+  Service(ConnectContext& ctx, std::string name);
 
 private:
 
   friend class ConnectContext;
 
-  Service(Service &) = delete;
-  Service &operator=(Service &) = delete;
+  Service(Service&) = delete;
+  Service& operator=(Service&) = delete;
 
-  ConnectContext &_ctx;
+  ConnectContext& _ctx;
 
   std::string _name;
 
@@ -156,7 +156,7 @@ private:
   void onStatus(Peer& peer, Peer::ConnectionStatus status);
 
   peer_request_callback _onRequest;
-  void onRequest(Peer& peer, h2::ServerRequest &request,
+  void onRequest(Peer& peer, h2::ServerRequest& request,
     std::string subPath);
 
   peer_websocket_callback _onWebSocket;
@@ -174,33 +174,33 @@ protected:
 
   boost::optional<Peer&> findPeerByCert(CERTCertificate *cert);
 
-  void handshakePeer(io::SSLSocket &sock, boost::optional<Peer&> knownPeer,
+  void handshakePeer(io::SSLSocket& sock, boost::optional<Peer&> knownPeer,
     handshake_peer_callback cb);
 
   void incomingDirectConnection(std::shared_ptr<io::SSLSocket> socket);
 
   void incomingTorConnection(std::shared_ptr<io::SSLSocket> socket);
 
-  void tryConnectPeerTor(Peer &peer, Peer::address_list::const_iterator it);
+  void tryConnectPeerTor(Peer& peer, Peer::address_list::const_iterator it);
 
 public:
 
-  void connectPeerDirect(Peer &peer, PRNetAddr *addr);
+  void connectPeerDirect(Peer& peer, PRNetAddr* addr);
 
-  void connectPeerTor(Peer &peer);
+  void connectPeerTor(Peer& peer);
 
-  ConnectContext(io::SSLContext &sslCtx);
-  ConnectContext(io::SSLContext &sslCtx, std::string peerdir);
+  ConnectContext(io::SSLContext& sslCtx);
+  ConnectContext(io::SSLContext& sslCtx, std::string peerdir);
 
-  io::IOContext &ioCtx();
+  io::IOContext& ioCtx();
 
-  io::SSLContext &sslCtx();
+  io::SSLContext& sslCtx();
 
   void addDirectory(std::string directory);
 
   Peer& addPeer(const std::string& derPublicKey, const std::string& nickname);
 
-  boost::optional<Peer&> findPeerByName(const std::string &nickname);
+  boost::optional<Peer&> findPeerByName(const std::string& nickname);
 
   void serveDirect(std::uint16_t directIncomingPort);
 
@@ -238,16 +238,16 @@ private:
 
   std::map<std::string, std::shared_ptr<Service>> _services;
 
-  void onPeerRequest(Peer &peer, h2::ServerRequest &request);
+  void onPeerRequest(Peer& peer, h2::ServerRequest& request);
 
-  void onPeerConnectionStatus(Peer &peer, Peer::ConnectionStatus status);
+  void onPeerConnectionStatus(Peer& peer, Peer::ConnectionStatus status);
 
-  void initializeReverseConnection(Peer &peer);
+  void initializeReverseConnection(Peer& peer);
 
-  void serviceSubmit(Service &service, Peer &peer, std::string method,
+  void serviceSubmit(Service& service, Peer& peer, std::string method,
     std::string path, Service::peer_submit_callback cb);
 
-  void serviceOpenWebSocket(Service &service, Peer &peer, std::string path,
+  void serviceOpenWebSocket(Service& service, Peer& peer, std::string path,
     Service::peer_websocket_callback cb);
 };
 
