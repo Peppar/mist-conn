@@ -218,6 +218,7 @@
     <ClInclude Include="src\client\headers\memory\nss.hpp" />
     <ClInclude Include="src\client\headers\node\async.hpp" />
     <ClInclude Include="src\client\headers\node\convert.hpp" />
+    <ClInclude Include="src\client\headers\node\wrap.hpp" />
     <ClInclude Include="src\client\headers\tor\tor.hpp" />
   </ItemGroup>
   <ItemGroup>

@@ -215,6 +215,9 @@
     <ClInclude Include="src\client\headers\node\convert.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\client\headers\node\wrap.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="binding.gyp" />

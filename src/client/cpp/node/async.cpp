@@ -3,6 +3,8 @@
 #include <functional>
 #include <memory>
 
+#include <uv.h>
+
 namespace
 {
 

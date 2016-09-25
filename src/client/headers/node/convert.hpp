@@ -2,6 +2,9 @@
 
 #include <cstddef>
 #include <string>
+#include <type_traits>
+
+#include <nan.h>
 
 namespace detail
 {
@@ -71,9 +74,9 @@ struct NodeValueConverter<const std::string>
 };
 
 template<>
-struct NodeValueConverter<const char*>
+struct NodeValueConverter<const char* const>
 {
-  static v8::Local<v8::Value> conv(const char* v)
+  static v8::Local<v8::Value> conv(const char* const v)
   {
     return Nan::New(v).ToLocalChecked();
   }
