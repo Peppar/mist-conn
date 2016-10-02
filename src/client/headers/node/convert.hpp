@@ -6,6 +6,13 @@
 
 #include <nan.h>
 
+namespace mist
+{
+namespace nodemod
+{
+
+extern v8::Isolate* isolate;
+
 namespace detail
 {
 
@@ -124,3 +131,6 @@ T convBack(v8::Local<v8::Value> v)
 {
   return detail::NodeValueConverter<detail::node_decay_t<T>>::convBack(v);
 }
+
+} // namespace nodemod
+} // namespace mist

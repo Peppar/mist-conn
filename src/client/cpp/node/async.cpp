@@ -5,6 +5,10 @@
 
 #include <uv.h>
 
+namespace mist
+{
+namespace nodemod
+{
 namespace
 {
 
@@ -53,3 +57,6 @@ asyncCall(std::function<void()> callback)
   });
   uv_async_send(&ac->handle);
 }
+
+} // namepace nodemod
+} // namespace mist

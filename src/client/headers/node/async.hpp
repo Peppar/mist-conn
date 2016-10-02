@@ -4,6 +4,10 @@
 
 #include <nan.h>
 
+namespace mist
+{
+namespace nodemod
+{
 void asyncCall(std::function<void()> callback);
 
 template<typename T>
@@ -49,8 +53,8 @@ struct MakeAsyncCallbackHelper
     cb(nodeArgs.size(), nodeArgs.data());
   }
 
-  static std::function<void(Args...)> make(v8::Local<v8::Function> func,
-    callback_type cb)
+  static std::function<void(Args...)>
+  make(v8::Local<v8::Function> func, callback_type cb)
   {
     Nan::HandleScope scope;
     auto pfunc(std::make_shared<Nan::Persistent<v8::Function>>(func));
@@ -69,7 +73,8 @@ struct MakeAsyncCallbackHelper
     };
   }
 
-  static std::function<void(Args...)> makeAuto(v8::Local<v8::Function> func)
+  static std::function<void(Args...)>
+  make(v8::Local<v8::Function> func)
   {
     Nan::HandleScope scope;
     auto pfunc(std::make_shared<Nan::Persistent<v8::Function>>(func));
@@ -103,5 +108,8 @@ template<typename... Args>
 std::function<void(Args...)>
 makeAsyncCallback(v8::Local<v8::Function> func)
 {
-  return detail::MakeAsyncCallbackHelper<Args...>::makeAuto(std::move(func));
+  return detail::MakeAsyncCallbackHelper<Args...>::make(std::move(func));
 }
+
+} // namepace nodemod
+} // namespace mist

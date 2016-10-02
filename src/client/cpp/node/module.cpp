@@ -1,8 +1,11 @@
-#ifdef _BUILD_NODE_MODULE
+// #ifdef _BUILD_NODE_MODULE
 
+#include <algorithm>
+#include <functional>
+#include <iostream>
 #include <string>
 #include <type_traits>
-#include <iostream>
+#include <mutex>
 
 #include <prio.h>
 
@@ -30,13 +33,19 @@
 #include "node/convert.hpp"
 #include "node/wrap.hpp"
 
-namespace
+namespace mist
+{
+namespace nodemod
 {
 
 // This plugin works for this isolate only
 v8::Isolate* isolate = nullptr;
 
-CopyablePersistent<v8::Object> stream;
+namespace
+{
+
+//CopyablePersistent<v8::Object> moduleStream_p;
+//CopyablePersistent<v8::Object> moduleUtil_p;
 
 void parseIPAddress(PRNetAddr* addr, const std::string& str,
   std::uint16_t port, boost::system::error_code ec)
@@ -68,17 +77,44 @@ std::unique_ptr<mist::ConnectContext> connCtx;
 
 } // namespace
 
-class Peer : public NodeWrapSingleton<Peer, mist::Peer*>
+v8::Local<v8::Object>
+require(v8::Local<v8::Object> module, const std::string& path)
+{
+  v8::HandleScope scope(isolate);
+
+  v8::Local<v8::Function> require
+    = module->Get(conv("require")).As<v8::Function>();
+
+  v8::Local<v8::Value> args[] = { conv(path) };
+
+  return require->Call(module, 1, args).As<v8::Object>();
+}
+
+//void
+//inherit(v8::Local<v8::Object> module, v8::Local<v8::Object> userClass,
+//  v8::Local<v8::Object> baseClass)
+//{
+//  v8::Local<v8::Object> moduleUtil = Nan::New(moduleUtil_p);
+//
+//  v8::Local<v8::Function> inherit
+//    = moduleUtil->Get(conv("inherit")).As<v8::Function>();
+//
+//  v8::Local<v8::Value> args[] = { userClass, baseClass };
+//  inherit->Call(module, 2, args);
+//}
+
+class Peer : public NodeWrapSingleton<Peer, mist::Peer&>
 {
 public:
+
+  Peer(mist::Peer& peer)
+    : NodeWrapSingleton(peer) {}
 
   static const char *ClassName() { return "Peer"; }
 
   static v8::Local<v8::FunctionTemplate> Init()
   {
-    v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
-    tpl->SetClassName(Nan::New(ClassName()).ToLocalChecked());
-    tpl->InstanceTemplate()->SetInternalFieldCount(1);
+    v8::Local<v8::FunctionTemplate> tpl = defaultTemplate(ClassName());
 
     //SetPrototypeMethod(tpl, "setOnPeerConnectionStatus",
     //  setOnPeerConnectionStatus);
@@ -94,15 +130,12 @@ private:
   static NAN_METHOD(New)
   {
     if (info.IsConstructCall()) {
-      Peer *obj = new Peer();
-      obj->Wrap(info.This());
+      //Peer *obj = new Peer();
+      //obj->Wrap(info.This());
       info.GetReturnValue().Set(info.This());
     } else {
-      /* TODO: Throw */
-      const int argc = 1;
-      v8::Local<v8::Value> argv[argc] = { info[0] };
-      v8::Local<v8::Function> ctor = Nan::New(constructor());
-      info.GetReturnValue().Set(ctor->NewInstance(argc, argv));
+      isolate->ThrowException(v8::String::NewFromUtf8(isolate,
+        "This class cannot be constructed in this way"));
     }
   }
 };
@@ -124,7 +157,7 @@ struct NodeValueConverter<const mist::Peer*>
 {
   static v8::Local<v8::Value> conv(const mist::Peer* v)
   {
-    mist::Peer* ptr = const_cast<mist::Peer*>(v);
+    mist::Peer& ptr = *const_cast<mist::Peer*>(v);
     v8::Local<v8::Object> obj(Peer::object(ptr));
     return obj;
   }
@@ -148,6 +181,7 @@ public:
 
   static v8::Local<v8::FunctionTemplate> Init()
   {
+
     v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
     tpl->SetClassName(Nan::New(ClassName()).ToLocalChecked());
     tpl->InstanceTemplate()->SetInternalFieldCount(1);
@@ -163,7 +197,7 @@ public:
 
 private:
 
-  static NAN_METHOD(New)
+  static void New(const Nan::FunctionCallbackInfo<v8::Value>& info)
   {
     if (info.IsConstructCall()) {
       std::string name(convBack<std::string>(info[0]));
@@ -171,10 +205,8 @@ private:
       obj->Wrap(info.This());
       info.GetReturnValue().Set(info.This());
     } else {
-      const int argc = 1;
-      v8::Local<v8::Value> argv[argc] = { info[0] };
-      v8::Local<v8::Function> ctor = Nan::New(constructor());
-      info.GetReturnValue().Set(ctor->NewInstance(argc, argv));
+      isolate->ThrowException(v8::String::NewFromUtf8(isolate,
+        "This class cannot be constructed in this way"));
     }
   }
   /*
@@ -190,11 +222,11 @@ private:
   void openWebSocket(Peer& peer, std::string path,
     peer_websocket_callback cb);*/
 
-  void setOnPeerConnectionStatus(const Nan::FunctionCallbackInfo<v8::Value>& args)
+  void setOnPeerConnectionStatus(const Nan::FunctionCallbackInfo<v8::Value>& info)
   {
     Nan::HandleScope scope;
 
-    auto func = args[0].As<v8::Function>();
+    auto func = info[0].As<v8::Function>();
 
     self()->setOnPeerConnectionStatus(
       makeAsyncCallback<mist::Peer&, mist::Peer::ConnectionStatus>(func));
@@ -227,147 +259,196 @@ private:
 };
 
 
-//
-//class ClientRequestSingleton
-//{
-//private:
-//
-//  friend class ClientRequest;
-//
-//  Nan::Persistent<v8::Function> _ctor;
-//  PersistentMap<mist::ClientRequest*, v8::Object> _objMap;
-//
-//} _clientRequestSingleton;
-//
-//class ClientRequest : public Nan::ObjectWrap
-//{
-//private:
-//
-//  mist::h2::ClientRequest* _self;
-//
-//  ClientRequest() : _self(nullptr) {}
-//
-//public:
-//
-//  static mist::ClientRequest& self(v8::Local<v8::Object> obj)
-//  {
-//    return *(Nan::ObjectWrap::Unwrap<ClientRequest>(obj)->_self);
-//  }
-//
-//  mist::ClientRequest& self()
-//  {
-//    return *_self;
-//  }
-//
-//  static const char *ClassName() { return "ClientRequest"; }
-//
-//  static v8::Local<v8::FunctionTemplate> Init()
-//  {
-//    v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
-//    tpl->SetClassName(Nan::New(ClassName()).ToLocalChecked());
-//    tpl->InstanceTemplate()->SetInternalFieldCount(1);
-//
-//    SetPrototypeMethod(tpl, "setOnResponse",
-//      setOnResponse);
-//    SetPrototypeMethod(tpl, "setOnPush",
-//      setOnPush);
-//    SetPrototypeMethod(tpl, "setOnRead",
-//      setOnRead);
-//    SetPrototypeMethod(tpl, "headers",
-//      headers);
-//    //SetPrototypeMethod(tpl, "callMe", CallMe);
-//    //SetPrototypeMethod(tpl, "getValue", GetValue);
-//
-//    _serviceSingleton._ctor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
-//    return tpl;
-//  }
-//
-//private:
-//
-//  static NAN_METHOD(New)
-//  {
-//    if (info.IsConstructCall()) {
-//      std::string name(convBack<std::string>(info[0]));
-//      //std::string name(*v8::String::Utf8Value(Nan::To<v8::String>(info[0]).ToLocalChecked()));
-//      Service *obj = new Service(connCtx->newService(name));
-//      obj->Wrap(info.This());
-//      info.GetReturnValue().Set(info.This());
-//    } else {
-//      const int argc = 1;
-//      v8::Local<v8::Value> argv[argc] = { info[0] };
-//      v8::Local<v8::Function> ctor = Nan::New(_serviceSingleton._ctor);
-//      info.GetReturnValue().Set(ctor->NewInstance(argc, argv));
-//    }
-//  }
-//  
-//  //void setOnPeerConnectionStatus(peer_connection_status_callback cb);
-//
-//  //void setOnPeerRequest(peer_request_callback cb);
-//
-//  //void submit(Peer &peer, std::string method, std::string path,
-//  //peer_submit_callback cb);
-//
-//  //void setOnWebSocket(peer_websocket_callback cb);
-//
-//  //void openWebSocket(Peer& peer, std::string path,
-//  //peer_websocket_callback cb);
-//
-//  static NAN_METHOD(setOnResponse)
-//  {
-//    Nan::HandleScope scope;
-//    auto func = v8::Local<v8::Function>::Cast(info[0]);
-//
-//    self(info.Holder()).setOnResponse(
-//      makeAsyncCallback<mist::h2::ClientResponse&>(func));
-//  }
-//
-//  static NAN_METHOD(setOnPush)
-//  {
-//    Nan::HandleScope scope;
-//    auto func = v8::Local<v8::Function>::Cast(info[0]);
-//
-//    self(info.Holder()).setOnPush(
-//      makeAsyncCallback<mist::h2::ClientRequest&>(func));
-//  }
-//
-//  static NAN_METHOD(setOnRead)
-//  {
-//    Nan::HandleScope scope;
-//    auto func = v8::Local<v8::Function>::Cast(info[0]);
-//
-//    //self(info.Holder()).setOnResponse(
-//    //  makeAsyncCallback<mist::h2::ClientResponse&>(func));
-//  }
-//
-//  /*
-//  static NAN_METHOD(setOnPeerRequest)
-//  {
-//  Quorve* obj = Nan::ObjectWrap::Unwrap<Quorve>(info.Holder());
-//  auto callback = v8::Local<v8::Function>::Cast(info[0]);
-//  asyncCallNode(callback);
-//  //info.GetReturnValue().Set(obj->handle());
-//  }
-//
-//  static NAN_METHOD(submit)
-//  {
-//  Quorve* obj = Nan::ObjectWrap::Unwrap<Quorve>(info.Holder());
-//  info.GetReturnValue().Set(obj->value_);
-//  }
-//  static NAN_METHOD(setOnWebSocket)
-//  {
-//  Quorve* obj = Nan::ObjectWrap::Unwrap<Quorve>(info.Holder());
-//  info.GetReturnValue().Set(obj->value_);
-//  }
-//  static NAN_METHOD(openWebSocket)
-//  {
-//  Quorve* obj = Nan::ObjectWrap::Unwrap<Quorve>(info.Holder());
-//  info.GetReturnValue().Set(obj->value_);
-//  }*/
-//};
-
-NAN_METHOD(initializeNSS)
+class ClientRequest
+  : public NodeWrapSingleton<ClientRequest, mist::h2::ClientRequest&>
 {
-  Nan::HandleScope scope;
+private:
+
+  bool _inWrite;
+  const char *_dataToWrite;
+  std::size_t _lengthToWrite;
+  CopyablePersistent<v8::Function> _callback;
+
+public:
+
+  ClientRequest(mist::h2::ClientRequest& _self)
+    : NodeWrapSingleton(_self),
+    _dataToWrite(nullptr), _lengthToWrite(0), _inWrite(false)
+  {
+    using namespace std::placeholders;
+    self().setOnRead(std::bind(&ClientRequest::onRead, this, _1, _2, _3));
+  }
+
+  static const char *ClassName() { return "ClientRequest"; }
+
+  static v8::Local<v8::FunctionTemplate> Init()
+  {
+    v8::Local<v8::FunctionTemplate> tpl = defaultTemplate(ClassName());
+
+    Nan::SetPrototypeMethod(tpl, "setOnResponse",
+      Method<&ClientRequest::setOnResponse>);
+    Nan::SetPrototypeMethod(tpl, "setOnPush",
+      Method<&ClientRequest::setOnPush>);
+    Nan::SetPrototypeMethod(tpl, "headers",
+      Method<&ClientRequest::headers>);
+    Nan::SetPrototypeMethod(tpl, "_write",
+      Method<&ClientRequest::_write>);
+
+    constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
+
+    return tpl;
+  }
+
+private:
+
+  void _write(const Nan::FunctionCallbackInfo<v8::Value>& info)
+  {
+    v8::Local<v8::Object> chunk = info[0].As<v8::Object>();
+    std::string encoding = convBack<std::string>(info[1]);
+    v8::Local<v8::Function> callback = info[2].As<v8::Function>();
+
+    assert(node::Buffer::HasInstance(chunk));
+
+    assert(!_dataToWrite);
+    assert(!_lengthToWrite);
+
+    _dataToWrite = node::Buffer::Data(chunk);
+    _lengthToWrite = node::Buffer::Length(chunk);
+
+    // TODO: Are we allowed to call resume without this guard?
+    if (!_inWrite)
+      self().stream().resume();
+  }
+
+  ssize_t onRead(std::uint8_t *data, std::size_t length, std::uint32_t *flags)
+  {
+    ssize_t actualLength = std::min(length, _lengthToWrite);
+    std::copy(_dataToWrite, _dataToWrite + actualLength, data);
+
+    _inWrite = true;
+    _lengthToWrite -= actualLength;
+    if (!_lengthToWrite) {
+      _dataToWrite = nullptr;
+      asyncCall([=]()
+      {
+        Nan::Callback cb(Nan::New(_callback));
+        cb();
+      });
+    }
+    _inWrite = false;
+    return actualLength;
+  }
+
+  void setOnResponse(const Nan::FunctionCallbackInfo<v8::Value>& info)
+  {
+    v8::HandleScope scope(isolate);
+    auto func = v8::Local<v8::Function>::Cast(info[0]);
+    
+    self(info.Holder()).setOnResponse(
+      makeAsyncCallback<mist::h2::ClientResponse&>(func));
+  }
+
+  void setOnPush(const Nan::FunctionCallbackInfo<v8::Value>& info)
+  {
+    v8::HandleScope scope(isolate);
+    auto func = v8::Local<v8::Function>::Cast(info[0]);
+
+    self(info.Holder()).setOnPush(
+      makeAsyncCallback<mist::h2::ClientRequest&>(func));
+  }
+
+  void headers(const Nan::FunctionCallbackInfo<v8::Value>& info)
+  {
+    v8::HandleScope scope(isolate);
+  }
+
+};
+
+namespace detail
+{
+
+template<>
+struct NodeValueConverter<const mist::h2::ClientRequest*>
+{
+  static v8::Local<v8::Value> conv(const mist::h2::ClientRequest* v)
+  {
+    mist::h2::ClientRequest& ptr = *const_cast<mist::h2::ClientRequest*>(v);
+    return ClientRequest::object(ptr);
+  }
+};
+
+} // namespace detail
+
+class ClientResponse
+  : public NodeWrapSingleton<ClientResponse, mist::h2::ClientResponse&>
+{
+public:
+
+  ClientResponse(mist::h2::ClientResponse& _self)
+    : NodeWrapSingleton(_self)
+  {
+  }
+
+  static const char *ClassName() { return "ClientResponse"; }
+
+  static v8::Local<v8::FunctionTemplate> Init()
+  {
+    v8::Local<v8::FunctionTemplate> tpl = defaultTemplate(ClassName());
+
+    Nan::SetPrototypeMethod(tpl, "setOnData",
+      Method<&ClientResponse::setOnData>);
+
+    constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
+
+    return tpl;
+  }
+
+private:
+
+  void setOnData(const Nan::FunctionCallbackInfo<v8::Value>& info)
+  {
+    auto func = info[0].As<v8::Function>();
+    self().setOnData(
+      makeAsyncCallback<const std::uint8_t*, std::size_t>(func,
+        [](v8::Local<v8::Function> func, const std::uint8_t* data,
+           std::size_t length)
+      {
+        v8::HandleScope scope(isolate);
+        Nan::Callback cb(func);
+        v8::Local<v8::Value> args[] = {
+          node::Buffer::Copy(isolate, reinterpret_cast<const char*>(data),
+            length).ToLocalChecked()
+        };
+        cb(1, args);
+      }));
+  }
+
+  void headers(const Nan::FunctionCallbackInfo<v8::Value>& info)
+  {
+    v8::HandleScope scope(isolate);
+  }
+
+};
+
+namespace detail
+{
+
+template<>
+struct NodeValueConverter<const mist::h2::ClientResponse*>
+{
+  static v8::Local<v8::Value> conv(const mist::h2::ClientResponse* v)
+  {
+    mist::h2::ClientResponse& ptr = *const_cast<mist::h2::ClientResponse*>(v);
+    return ClientResponse::object(ptr);
+  }
+};
+
+} // namespace detail
+
+void
+initializeNSS(const Nan::FunctionCallbackInfo<v8::Value>& info)
+{
+  v8::HandleScope scope(isolate);
 
   std::string dbDir(convBack<std::string>(info[0]));
   //std::string dbDir(*v8::String::Utf8Value(Nan::To<v8::String>(info[0]).ToLocalChecked()));
@@ -383,9 +464,10 @@ NAN_METHOD(initializeNSS)
   //info.GetReturnValue().Set(rv);
 }
 
-NAN_METHOD(loadPKCS12)
+void
+loadPKCS12(const Nan::FunctionCallbackInfo<v8::Value>& info)
 {
-  Nan::HandleScope scope;
+  v8::HandleScope scope(isolate);
 
   std::string data(convBack<std::string>(info[0]));
   std::string password(convBack<std::string>(info[1]));
@@ -393,9 +475,10 @@ NAN_METHOD(loadPKCS12)
   sslCtx->loadPKCS12(data, password);
 }
 
-NAN_METHOD(loadPKCS12File)
+void
+loadPKCS12File(const Nan::FunctionCallbackInfo<v8::Value>& info)
 {
-  Nan::HandleScope scope;
+  v8::HandleScope scope(isolate);
 
   std::string filename(convBack<std::string>(info[0]));
   std::string password(convBack<std::string>(info[1]));
@@ -403,18 +486,20 @@ NAN_METHOD(loadPKCS12File)
   sslCtx->loadPKCS12File(filename, password);
 }
 
-NAN_METHOD(serveDirect)
+void
+serveDirect(const Nan::FunctionCallbackInfo<v8::Value>& info)
 {
-  Nan::HandleScope scope;
+  v8::HandleScope scope(isolate);
 
   std::uint16_t incomingPort(convBack<std::uint16_t>(info[0]));
 
   connCtx->serveDirect(incomingPort);
 }
 
-NAN_METHOD(startServeTor)
+void
+startServeTor(const Nan::FunctionCallbackInfo<v8::Value>& info)
 {
-  Nan::HandleScope scope;
+  v8::HandleScope scope(isolate);
 
   try {
 
@@ -439,11 +524,12 @@ NAN_METHOD(startServeTor)
   }
 }
 
-NAN_METHOD(connectPeerDirect)
+void
+connectPeerDirect(const Nan::FunctionCallbackInfo<v8::Value>& info)
 {
-  Nan::HandleScope scope;
+  v8::HandleScope scope(isolate);
 
-  mist::Peer& peer = *Peer::self(info[0].As<v8::Object>());
+  mist::Peer& peer = Peer::self(info[0].As<v8::Object>());
 
   PRNetAddr addr;
   {
@@ -451,7 +537,7 @@ NAN_METHOD(connectPeerDirect)
 
     std::string addrStr(convBack<std::string>(info[1]));
     std::uint16_t port(convBack<std::uint16_t>(info[2]));
-    
+
     parseIPAddress(&addr, addrStr, port, ec);
     if (ec)
       BOOST_THROW_EXCEPTION(boost::system::system_error(ec,
@@ -461,32 +547,35 @@ NAN_METHOD(connectPeerDirect)
   connCtx->connectPeerDirect(peer, &addr);
 }
 
-NAN_METHOD(connectPeerTor)
+void
+connectPeerTor(const Nan::FunctionCallbackInfo<v8::Value>& info)
 {
   Nan::HandleScope scope;
 
-  mist::Peer& peer = *Peer::self(info[0].As<v8::Object>());
+  mist::Peer& peer = Peer::self(info[0].As<v8::Object>());
 
   connCtx->connectPeerTor(peer);
 }
 
-NAN_METHOD(addPeer)
+void
+addPeer(const Nan::FunctionCallbackInfo<v8::Value>& info)
 {
-  Nan::HandleScope scope;
+  v8::HandleScope scope(isolate);
 
   std::string derPublicKey(convBack<std::string>(info[0]));
   std::string nickname(convBack<std::string>(info[1]));
 
   mist::Peer& peer = connCtx->addPeer(derPublicKey, nickname);
 
-  v8::Local<v8::Object> nodePeer = Peer::object(&peer);
+  v8::Local<v8::Object> nodePeer = Peer::object(peer);
 
   info.GetReturnValue().Set(nodePeer);
 }
 
-NAN_METHOD(onionAddress)
+void
+onionAddress(const Nan::FunctionCallbackInfo<v8::Value>& info)
 {
-  Nan::HandleScope scope;
+  v8::HandleScope scope(isolate);
 
   try {
     auto func = info[0].As<v8::Function>();
@@ -498,31 +587,18 @@ NAN_METHOD(onionAddress)
   }
 }
 
-v8::Local<v8::Object>
-require(v8::Local<v8::Object> module, const std::string& path)
-{
-  v8::HandleScope scope(isolate);
-
-  v8::Local<v8::Function> require
-    = module->Get(conv("require")).As<v8::Function>();
-
-  v8::Local<v8::Value> args[] = { conv(path) };
-
-  return require->Call(module, 1, args).As<v8::Object>();
-}
-
 void
 Init(v8::Local<v8::Object> target, v8::Local<v8::Object> module)
 {
   isolate = target->GetIsolate();
   v8::HandleScope scope(isolate);
 
-  stream = CopyablePersistent<v8::Object>(require(module, "stream"));
-
   Nan::Set(target, Nan::New(Service::ClassName()).ToLocalChecked(),
     Nan::GetFunction(Service::Init()).ToLocalChecked());
   Nan::Set(target, Nan::New(Peer::ClassName()).ToLocalChecked(),
     Nan::GetFunction(Peer::Init()).ToLocalChecked());
+  Nan::Set(target, Nan::New(ClientRequest::ClassName()).ToLocalChecked(),
+    Nan::GetFunction(ClientRequest::Init()).ToLocalChecked());
 
   Nan::Set(target, Nan::New("initializeNSS").ToLocalChecked(),
     Nan::GetFunction(Nan::New<v8::FunctionTemplate>(initializeNSS)).ToLocalChecked());
@@ -547,4 +623,6 @@ Init(v8::Local<v8::Object> target, v8::Local<v8::Object> module)
 
 NODE_MODULE(mist_conn, Init)
 
+} // namsepace nodemod
+} // namespace mist
 // #endif
