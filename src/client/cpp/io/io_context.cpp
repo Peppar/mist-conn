@@ -7,7 +7,7 @@
 #include <vector>
 
 // For debugging
-#include <iostream> 
+#include <iostream>
 
 #include <prio.h>
 #include <prtpool.h>
@@ -61,7 +61,7 @@ Timeout::Timeout(PRIntervalTime interval, std::function<void()> callback)
  */
 IOContext::IOContext()
 {
-  _signalEvent = to_unique(PR_NewPollableEvent(), [](PRFileDesc *p) {
+  _signalEvent = to_unique(PR_NewPollableEvent(), [](PRFileDesc* p) {
     PR_DestroyPollableEvent(p);
   });
   if (!_signalEvent)
@@ -73,6 +73,11 @@ IOContext::IOContext()
   if (!_threadPool)
     BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
       "Unable to create thread pool"));
+}
+
+IOContext::~IOContext()
+{
+  std::cerr << "Destroying IOContext" << std::endl;
 }
 
 /* Forces the eventLoop to wake up */
@@ -95,6 +100,7 @@ IOContext::openSocket()
 void
 IOContext::addDescriptor(std::shared_ptr<FileDescriptor> descriptor)
 {
+  std::lock_guard<std::recursive_mutex> lock(_descriptorMutex);
   _descriptors.emplace_back(std::move(descriptor));
 }
 
@@ -104,16 +110,17 @@ IOContext::setTimeout(unsigned int interval, job_callback callback)
 {
   /* Add the timeout to the front of the list to avoid infinite loops
   when a timeout callback sets new timeouts */
+  std::lock_guard<std::recursive_mutex> lock(_timeoutMutex);
   _timeouts.emplace_front(PR_MillisecondsToInterval(interval), callback);
 }
 
-PRJob *
+PRJob*
 IOContext::queueJob(job_callback callback)
 {
   /* We juggle memory here assuming that all jobs will run eventually */
   job_callback *outsideArg = new job_callback(callback);
 
-  PRJob *job = PR_QueueJob(_threadPool.get(),
+  PRJob* job = PR_QueueJob(_threadPool.get(),
     [](void *insideArg)
   {
     std::unique_ptr<job_callback> insideCb
@@ -137,16 +144,17 @@ IOContext::ioStep(unsigned int maxTimeout)
   /* Prepare the poll descriptor structures */
   std::vector<PRPollDesc> pds;
   {
+    std::lock_guard<std::recursive_mutex> lock(_descriptorMutex);
     pds.reserve(1 + _descriptors.size());
 
     /* Add the write event */
-    pds.push_back(PRPollDesc{_signalEvent.get(), PR_POLL_READ, 0});
+    pds.push_back(PRPollDesc{ _signalEvent.get(), PR_POLL_READ, 0 });
 
     /* Add the descriptors */
     for (auto i = _descriptors.begin(); i != _descriptors.end(); ) {
       boost::optional<PRInt16> inFlags = (*i)->inFlags();
       if (inFlags) {
-        pds.push_back(PRPollDesc{(*i)->fileDesc(), *inFlags, 0});
+        pds.push_back(PRPollDesc{ (*i)->fileDesc(), *inFlags, 0 });
         ++i;
       } else {
         i = _descriptors.erase(i);
@@ -158,6 +166,7 @@ IOContext::ioStep(unsigned int maxTimeout)
   PRIntervalTime timeoutInterval
     = PR_MillisecondsToInterval(maxTimeout);
   {
+    std::lock_guard<std::recursive_mutex> lock(_timeoutMutex);
     PRIntervalTime now = PR_IntervalNow();
     for (auto &timeout : _timeouts) {
       PRIntervalTime elapsedSince
@@ -173,10 +182,10 @@ IOContext::ioStep(unsigned int maxTimeout)
     }
   }
 
-  {
-    auto time = PR_IntervalToMilliseconds(timeoutInterval);
-    std::cerr << "Timeout interval is " << time << " ms" << std::endl;
-  }
+  //{
+  //  auto time = PR_IntervalToMilliseconds(timeoutInterval);
+  //  std::cerr << "Timeout interval is " << time << " ms" << std::endl;
+  //}
 
   /* Poll */
   bool pdsValid = true;
@@ -187,7 +196,7 @@ IOContext::ioStep(unsigned int maxTimeout)
         make_mist_error(MIST_ERR_ASSERTION), "Poll failed"));
     } else if (!n) {
       /* Timeout */
-      std::cerr << "Timeout" << std::endl;
+      //std::cerr << "Timeout" << std::endl;
       pdsValid = false;
     }
   }
@@ -199,7 +208,7 @@ IOContext::ioStep(unsigned int maxTimeout)
     /* Handle signalEvent */
     {
       if (j->out_flags & PR_POLL_READ) {
-        std::cerr << "signalEvent!" << std::endl;
+        //std::cerr << "signalEvent!" << std::endl;
         if (PR_WaitForPollableEvent(_signalEvent.get()) != PR_SUCCESS)
           BOOST_THROW_EXCEPTION(boost::system::system_error(make_nss_error(),
             "Unable to wait for signalEvent"));
@@ -209,16 +218,20 @@ IOContext::ioStep(unsigned int maxTimeout)
     }
 
     /* Handle the remaining descriptors */
-    for (auto i = _descriptors.begin(); j != pds.end(); ++i, ++j) {
-      if (j->out_flags) {
-        // PR_QueueJob
-        (*i)->process(j->in_flags, j->out_flags);
+    {
+      std::lock_guard<std::recursive_mutex> lock(_descriptorMutex);
+      for (auto i = _descriptors.begin(); j != pds.end(); ++i, ++j) {
+        if (j->out_flags) {
+          // PR_QueueJob
+          (*i)->process(j->in_flags, j->out_flags);
+        }
       }
     }
   }
 
   /* Handle timeouts */
   {
+    std::lock_guard<std::recursive_mutex> lock(_timeoutMutex);
     for (auto i = _timeouts.begin(); i != _timeouts.end(); ) {
       PRIntervalTime elapsedSince
         = static_cast<PRIntervalTime>(PR_IntervalNow() - i->established);

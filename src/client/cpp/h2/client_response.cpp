@@ -14,11 +14,11 @@ namespace mist
 namespace h2
 {
   
-ClientResponse::ClientResponse(ClientStream &stream)
+ClientResponse::ClientResponse(ClientStream& stream)
   : _stream(stream)
     {}
 
-ClientStream &
+ClientStream&
 ClientResponse::stream()
 {
   return _stream;
@@ -31,7 +31,7 @@ ClientResponse::setOnData(data_callback cb)
 }
 
 void
-ClientResponse::onData(const std::uint8_t *data, std::size_t length)
+ClientResponse::onData(const std::uint8_t* data, std::size_t length)
 {
   if (_onData)
     _onData(data, length);

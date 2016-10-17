@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <memory>
 #include <list>
+#include <mutex>
 
 #include <prio.h>
 
@@ -35,8 +36,10 @@ class IOContext
 private:
 
   std::list<Timeout> _timeouts;
+  std::recursive_mutex _timeoutMutex;
 
   std::list<std::shared_ptr<FileDescriptor>> _descriptors;
+  std::recursive_mutex _descriptorMutex;
 
   c_unique_ptr<PRFileDesc> _signalEvent;
 
@@ -50,6 +53,7 @@ public:
   using job_callback = std::function<void()>;
 
   IOContext();
+  ~IOContext();
 
   /* Wait for one round of I/O events and process them
      Timeout in milliseconds */
@@ -57,7 +61,7 @@ public:
 
   void exec();
 
-  PRJob *queueJob(job_callback callback);
+  PRJob* queueJob(job_callback callback);
 
   void setTimeout(unsigned int interval, job_callback callback);
 

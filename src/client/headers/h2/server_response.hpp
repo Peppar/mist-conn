@@ -21,6 +21,8 @@ private:
   
   generator_callback _onRead;
 
+  bool _eof;
+
 protected:
 
   friend class ServerStream;
@@ -35,12 +37,10 @@ public:
   ServerStream &stream();
 
   void setOnRead(generator_callback cb);
-  
+
+  void end();
+
   void writeHeaders(int statusCode, header_map headers);
-  
-  void end(std::string data = "");
-  
-  void end(generator_callback cb);
   
   void writeTrailers(header_map headers);
   

@@ -7,6 +7,7 @@
 #include <iostream>
 #include <string>
 #include <memory>
+#include <mutex>
 #include <vector>
 #include <list>
 
@@ -35,14 +36,18 @@ public:
 
   /* Callback types */
   using connect_callback = std::function<void(boost::system::error_code)>;
-  using write_callback = std::function<void(std::size_t, boost::system::error_code)>;
-  using read_callback = std::function<void(const uint8_t *, std::size_t, boost::system::error_code)>;
+  using write_callback = std::function<void(std::size_t,
+    boost::system::error_code)>;
+  using read_callback = std::function<void(const uint8_t*, std::size_t,
+    boost::system::error_code)>;
 
 protected:
 
   IOContext &_ioCtx;
 
   c_unique_ptr<PRFileDesc> _fd;
+
+  mutable std::recursive_mutex _mutex;
 
   /* The current overarching state of the socket */
   enum State {
@@ -64,7 +69,7 @@ protected:
       On,
     } state;
     
-    const uint8_t *data;
+    const uint8_t* data;
     std::size_t length;
     std::size_t nwritten;
     
@@ -114,12 +119,12 @@ protected:
   
 public:
 
-  TCPSocket(IOContext &ioCtx, c_unique_ptr<PRFileDesc> fd, bool isOpen);
+  TCPSocket(IOContext& ioCtx, c_unique_ptr<PRFileDesc> fd, bool isOpen);
 
-  IOContext &ioCtx();
+  IOContext& ioCtx();
   
   /* Connect to the specified address. */
-  void connect(PRNetAddr *addr, connect_callback cb = nullptr);
+  void connect(PRNetAddr* addr, connect_callback cb = nullptr);
 
   /* Read a fixed-length packet. */
   virtual void readOnce(std::size_t length, read_callback cb) override;
@@ -128,7 +133,7 @@ public:
   virtual void read(read_callback cb) override;
 
   /* Write. */
-  virtual void write(const uint8_t *data, std::size_t length,
+  virtual void write(const uint8_t* data, std::size_t length,
                      write_callback cb = nullptr) override;
 
   /* Close the socket. */
@@ -138,7 +143,7 @@ public:
 public:
 
   /* FileDescriptor interface implementation */
-  virtual PRFileDesc *fileDesc() override;
+  virtual PRFileDesc* fileDesc() override;
   
   virtual boost::optional<PRInt16> inFlags() const override;
   
@@ -147,7 +152,7 @@ public:
 private:
 
   TCPSocket(TCPSocket&&) = delete;
-  TCPSocket &operator=(TCPSocket&&) = delete;
+  TCPSocket& operator=(TCPSocket&&) = delete;
 
 };
 

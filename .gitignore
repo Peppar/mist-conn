@@ -40,3 +40,6 @@
 /key.p12
 /dllpaths.bat
 /v8-master
+/key2.p12
+/cacert.pem
+/cakey.pem

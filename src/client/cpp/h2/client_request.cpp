@@ -14,8 +14,8 @@ namespace mist
 namespace h2
 {
   
-ClientRequest::ClientRequest(ClientStream &stream)
-  : _stream(stream)
+ClientRequest::ClientRequest(ClientStream& stream)
+  : _stream(stream), _eof(false)
     {}
 
 ClientStream &
@@ -31,7 +31,7 @@ ClientRequest::setOnResponse(client_response_callback cb)
 }
 
 void
-ClientRequest::onResponse(ClientResponse &response)
+ClientRequest::onResponse(ClientResponse& response)
 {
   if (_onResponse)
     _onResponse(response);
@@ -44,7 +44,7 @@ ClientRequest::setOnPush(client_request_callback cb)
 }
 
 void
-ClientRequest::onPush(ClientRequest &pushRequest)
+ClientRequest::onPush(ClientRequest& pushRequest)
 {
   if (_onPush)
     _onPush(pushRequest);
@@ -57,14 +57,24 @@ ClientRequest::setOnRead(generator_callback cb)
 }
 
 generator_callback::result_type
-ClientRequest::onRead(std::uint8_t *data, std::size_t length, std::uint32_t *flags)
+ClientRequest::onRead(std::uint8_t* data, std::size_t length,
+  std::uint32_t* flags)
 {
-  if (_onRead) {
-    return _onRead(data, length, flags);
-  } else {
+  if (_eof) {
     *flags |= NGHTTP2_DATA_FLAG_EOF;
     return 0;
+  } else if (_onRead) {
+    return _onRead(data, length, flags);
+  } else {
+    return NGHTTP2_ERR_DEFERRED;
   }
+}
+
+void
+ClientRequest::end()
+{
+  _eof = true;
+  stream().resume();
 }
 
 }

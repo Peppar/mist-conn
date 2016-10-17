@@ -1,7 +1,7 @@
 {
     "targets": [
       {
-       "target_name": "mist_conn",
+       "target_name": "_mist_conn",
        "cflags_cc": [ "-frtti -fexceptions -std=c++14" ],
        "defines": [
           "_BUILD_NODE_MODULE",

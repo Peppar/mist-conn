@@ -441,7 +441,7 @@ SSLContext::authCertificate(SSLSocket &socket, PRBool checkSig,
 {
   auto cert = to_unique(SSL_PeerCertificate(socket.fileDesc()));
   std::string pubKeyHash = certPubKeyHash(cert.get());
-  std::cerr << "Public key hash = " << to_hex(pubKeyHash) << std::endl;
+  //std::cerr << "Public key hash = " << to_hex(pubKeyHash) << std::endl;
 
   /* Check certificate time validity */
   if (CERT_CheckCertValidTimes(cert.get(), PR_Now(), PR_TRUE)

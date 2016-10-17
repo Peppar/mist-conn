@@ -83,7 +83,7 @@ boost::optional<PRInt16>
 SSLSocket::inFlags() const
 {
   if (_state == State::Handshaking) {
-    std::cerr << "Socket handshaking poll" << std::endl;
+    //std::cerr << "Socket handshaking poll" << std::endl;
     return PR_POLL_READ;
   } else {
     return TCPSocket::inFlags();
@@ -102,7 +102,7 @@ SSLSocket::process(PRInt16 inFlags, PRInt16 outFlags)
     if (_state == State::Handshaking) {
       
       assert (outFlags & PR_POLL_READ);
-      std::cerr << "Socket handshaking PR_POLL_READ" << std::endl;
+      //std::cerr << "Socket handshaking PR_POLL_READ" << std::endl;
       handshakeContinue();
       
     } else {

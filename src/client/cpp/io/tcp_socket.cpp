@@ -3,6 +3,7 @@
 #include <iostream>
 #include <string>
 #include <memory>
+#include <mutex>
 #include <vector>
 #include <list>
 
@@ -26,31 +27,32 @@ namespace mist
 {
 namespace io
 {
-namespace
-{
-
-std::string to_hex(uint8_t byte)
-{
-  static const char *digits = "0123456789abcdef";
-  std::array<char, 2> text{digits[byte >> 4], digits[byte & 0xf]};
-  return std::string(text.begin(), text.end());
-}
-
-template<typename It>
-std::string to_hex(It begin, It end)
-{
-  std::string text;
-  while (begin != end)
-    text += to_hex(static_cast<uint8_t>(*(begin++)));
-  return text;
-}
-
-} // namespace
+//namespace
+//{
+//
+//std::string to_hex(uint8_t byte)
+//{
+//  static const char *digits = "0123456789abcdef";
+//  std::array<char, 2> text{digits[byte >> 4], digits[byte & 0xf]};
+//  return std::string(text.begin(), text.end());
+//}
+//
+//template<typename It>
+//std::string to_hex(It begin, It end)
+//{
+//  std::string text;
+//  while (begin != end)
+//    text += to_hex(static_cast<uint8_t>(*(begin++)));
+//  return text;
+//}
+//
+//} // namespace
 
 /*
  * Socket
  */
-TCPSocket::TCPSocket(IOContext &ioCtx, c_unique_ptr<PRFileDesc> fd, bool isOpen)
+TCPSocket::TCPSocket(IOContext& ioCtx, c_unique_ptr<PRFileDesc> fd,
+  bool isOpen)
   : _ioCtx(ioCtx), _fd(std::move(fd))
 {
   _w.state = Write::State::Off;
@@ -61,7 +63,7 @@ TCPSocket::TCPSocket(IOContext &ioCtx, c_unique_ptr<PRFileDesc> fd, bool isOpen)
     _state = State::Unconnected;
 }
 
-PRFileDesc *
+PRFileDesc*
 TCPSocket::fileDesc()
 {
   return _fd.get();
@@ -70,16 +72,18 @@ TCPSocket::fileDesc()
 boost::optional<PRInt16>
 TCPSocket::inFlags() const
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   if (_state == State::Closed) {
     return boost::none;
   } else if (_state == State::Connecting) {
-    std::cerr << "Socket connect poll" << std::endl;
+    //std::cerr << "Socket connect poll" << std::endl;
     return PR_POLL_WRITE|PR_POLL_EXCEPT;
   } else {
     PRInt16 flags
       = (isReading() ? PR_POLL_READ : 0)   // 1
       | (isWriting() ? PR_POLL_WRITE : 0); // 2
-    std::cerr << "Socket polling with flags " << flags << std::endl;
+    //std::cerr << "Socket polling with flags " << flags << std::endl;
     return flags;
   }
 }
@@ -87,6 +91,8 @@ TCPSocket::inFlags() const
 void
 TCPSocket::process(PRInt16 inFlags, PRInt16 outFlags)
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   if (outFlags & PR_POLL_ERR) {
     
     /* Get the error code by performing a bogus read, expected to fail */
@@ -105,15 +111,15 @@ TCPSocket::process(PRInt16 inFlags, PRInt16 outFlags)
   } else if (outFlags) {
     
     if (_state == State::Connecting) {
-      std::cerr << "Socket Connecting" << std::endl;
+      //std::cerr << "Socket Connecting" << std::endl;
       connectContinue(outFlags);
     } else {
       if (outFlags & PR_POLL_WRITE) {
-        std::cerr << "Socket Open PR_POLL_WRITE" << std::endl;
+        //std::cerr << "Socket Open PR_POLL_WRITE" << std::endl;
         writeReady();
       }
       if (outFlags & PR_POLL_READ) {
-        std::cerr << "Socket Open PR_POLL_READ" << std::endl;
+        //std::cerr << "Socket Open PR_POLL_READ" << std::endl;
         readReady();
       }
     }
@@ -122,8 +128,10 @@ TCPSocket::process(PRInt16 inFlags, PRInt16 outFlags)
 
 /* Connect to the specified address. */
 void
-TCPSocket::connect(PRNetAddr *addr, connect_callback cb)
+TCPSocket::connect(PRNetAddr* addr, connect_callback cb)
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   assert (_state == State::Unconnected);
   
   _c.cb = std::move(cb);
@@ -154,6 +162,8 @@ TCPSocket::connect(PRNetAddr *addr, connect_callback cb)
 void
 TCPSocket::connectContinue(PRInt16 out_flags)
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   assert (_state == State::Connecting);
   if (PR_ConnectContinue(_fd.get(), out_flags) != PR_SUCCESS) {
     PRErrorCode err = PR_GetError();
@@ -178,6 +188,8 @@ TCPSocket::connectContinue(PRInt16 out_flags)
 void
 TCPSocket::readOnce(std::size_t length, read_callback cb)
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   assert (_r.state == Read::State::Off);
 
   _r.state = Read::State::Once;
@@ -192,6 +204,8 @@ TCPSocket::readOnce(std::size_t length, read_callback cb)
 void
 TCPSocket::read(read_callback cb)
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   assert (_r.state == Read::State::Off);
 
   _r.state = Read::State::Continuous;
@@ -206,6 +220,8 @@ TCPSocket::read(read_callback cb)
 void
 TCPSocket::readReady()
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   assert (_r.state != Read::State::Off);
 
   std::size_t length = _r.buffer.size();
@@ -232,7 +248,7 @@ TCPSocket::readReady()
       close(make_nss_error(err));
     }
   } else {
-    std::cerr << "Received " << to_hex(_r.buffer.data(), _r.buffer.data() + nread) << std::endl;
+    //std::cerr << "Received " << to_hex(_r.buffer.data(), _r.buffer.data() + nread) << std::endl;
     if (_r.state == Read::State::Once) {
       _r.nread += nread;
       assert (_r.nread <= _r.length);
@@ -255,9 +271,11 @@ TCPSocket::readReady()
 
 /* Write. */
 void
-TCPSocket::write(const uint8_t *data, std::size_t length,
-              write_callback cb)
+TCPSocket::write(const uint8_t* data, std::size_t length,
+  write_callback cb)
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   assert (length);
   assert (_w.state == Write::State::Off);
   
@@ -268,13 +286,15 @@ TCPSocket::write(const uint8_t *data, std::size_t length,
   
   _w.cb = std::move(cb);
   
-  writeReady();
+  signal();
 }
 
 /* Called when the socket is ready for writing. */
 void
 TCPSocket::writeReady()
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   assert (_w.state == Write::State::On);
   auto rc = PR_Send(_fd.get(), _w.data + _w.nwritten,
                     _w.length - _w.nwritten, 0,
@@ -291,7 +311,7 @@ TCPSocket::writeReady()
       close(make_nss_error(err));
     }
   } else {
-    std::cerr << "Wrote " << to_hex(_w.data + _w.nwritten, _w.data + _w.nwritten + rc) << std::endl;
+    //std::cerr << "Wrote " << to_hex(_w.data + _w.nwritten, _w.data + _w.nwritten + rc) << std::endl;
     /* Wrote rc bytes */
     _w.nwritten += rc;
     assert (_w.nwritten <= _w.length);
@@ -311,6 +331,8 @@ TCPSocket::writeReady()
 void
 TCPSocket::close(boost::system::error_code ec)
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   if (!ec)
     ec = make_nss_error(PR_CONNECT_RESET_ERROR);
   if (_state == State::Connecting && _c.cb) {
@@ -336,6 +358,8 @@ TCPSocket::close(boost::system::error_code ec)
 bool
 TCPSocket::isWriting() const
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   return _w.state != Write::State::Off;
 }
 
@@ -343,6 +367,8 @@ TCPSocket::isWriting() const
 bool
 TCPSocket::isReading() const
 {
+  std::lock_guard<std::recursive_mutex> lock(_mutex);
+
   return _r.state != Read::State::Off;
 }
 
@@ -354,7 +380,7 @@ TCPSocket::signal()
 }
 
 /* Returns the I/O context of the socket */
-IOContext &
+IOContext&
 TCPSocket::ioCtx()
 {
   return _ioCtx;

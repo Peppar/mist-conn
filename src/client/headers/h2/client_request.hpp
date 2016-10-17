@@ -18,7 +18,7 @@ class ClientRequest : public RequestLane
 {
 private:
 
-  ClientStream &_stream;
+  ClientStream& _stream;
   
   client_response_callback _onResponse;
   
@@ -26,28 +26,32 @@ private:
   
   generator_callback _onRead;
 
+  bool _eof;
+
 protected:
 
   friend class ClientStream;
   
-  void onResponse(ClientResponse &response);
+  void onResponse(ClientResponse& response);
 
-  void onPush(ClientRequest &pushRequest);
+  void onPush(ClientRequest& pushRequest);
 
-  generator_callback::result_type onRead(std::uint8_t *data, std::size_t length,
-                                         std::uint32_t *flags);
+  generator_callback::result_type onRead(std::uint8_t* data,
+    std::size_t length, std::uint32_t* flags);
 
 public:
 
-  ClientRequest(ClientStream &stream);
+  ClientRequest(ClientStream& stream);
 
-  ClientStream &stream();
+  ClientStream& stream();
 
   void setOnResponse(client_response_callback cb);
 
   void setOnPush(client_request_callback cb);
 
   void setOnRead(generator_callback cb);
+
+  void end();
 
 };
 

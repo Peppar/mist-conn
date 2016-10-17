@@ -14,31 +14,41 @@ namespace mist
 namespace h2
 {
   
-ServerResponse::ServerResponse(ServerStream &stream)
-  : _stream(stream)
+ServerResponse::ServerResponse(ServerStream& stream)
+  : _stream(stream), _eof(false)
     {}
 
-ServerStream &
+ServerStream&
 ServerResponse::stream()
 {
   return _stream;
 }
 
-void 
+void
 ServerResponse::setOnRead(generator_callback cb)
 {
   _onRead = std::move(cb);
 }
 
 generator_callback::result_type
-ServerResponse::onRead(std::uint8_t *data, std::size_t length, std::uint32_t *flags)
+ServerResponse::onRead(std::uint8_t* data, std::size_t length,
+  std::uint32_t* flags)
 {
-  if (_onRead) {
-    return _onRead(data, length, flags);
-  } else {
+  if (_eof) {
     *flags |= NGHTTP2_DATA_FLAG_EOF;
     return 0;
+  } else if (_onRead) {
+    return _onRead(data, length, flags);
+  } else {
+    return NGHTTP2_ERR_DEFERRED;
   }
+}
+
+void
+ServerResponse::end()
+{
+  _eof = true;
+  stream().resume();
 }
 
 // void 
